@@ -248,6 +248,43 @@ def matches_group(raw_text: str, norm_text: str, terms: set[str]) -> bool:
     return False
 
 
+def is_branch_mode(query: str) -> bool:
+    return ("の" in query) or any(ch in query for ch in ("-", "ー", "－", "―", "‐", "‑", "–", "—", "〜", "～"))
+
+
+def build_branch_patterns(base: str, branch: str) -> list[re.Pattern]:
+    """Generate regex patterns that require 条の/条- style with exact branch."""
+    try:
+        base_k = int_to_kanji(int(base))
+    except Exception:
+        base_k = base
+    try:
+        branch_k = int_to_kanji(int(branch))
+    except Exception:
+        branch_k = branch
+
+    prefixes = ["", "法", "令"]
+    base_variants = [
+        f"{base}",
+        f"第{base}",
+        f"{base_k}",
+        f"第{base_k}",
+    ]
+    branch_variants = [branch, branch_k]
+    patterns: list[re.Pattern] = []
+    sep = r"(?:条(?:の|-|ー)|-|ー)"
+    for pre in prefixes:
+        for b in base_variants:
+            for br in branch_variants:
+                pat = rf"{pre}{b}{sep}{br}"
+                patterns.append(re.compile(pat))
+    return patterns
+
+
+def matches_branch_patterns(text: str, patterns: list[re.Pattern]) -> bool:
+    return any(p.search(text) for p in patterns)
+
+
 def make_safe_id(prefix_ascii: str, title: str, i: int) -> str:
     n = normalize_num(title)
     safe = re.sub(r"[^0-9A-Za-z_-]+", "_", n)
@@ -459,13 +496,18 @@ def get_article_base_number(title: str) -> str | None:
 
 # ==== 検索処理 ====
 
-def search_articles(root: ET.Element, query: str, article_mode: bool = False):
+def search_articles(root: ET.Element, query: str, article_mode: bool = False, branch_mode: bool = False, branch_base: str | None = None, branch_num: str | None = None):
     """法XMLから、条番号・キーワードを検索して該当条を返す。構造付き。"""
-    term_groups = build_term_groups(query, article_mode=article_mode)
+    term_groups = [] if branch_mode else build_term_groups(query, article_mode=article_mode)
     number_tokens = set(extract_query_numbers(query))
     results_number = []
     results_text = []
     context_map = build_article_context_map(root)
+    norm_query = normalize_separators(normalize_num(query))
+    branch_patterns: list[re.Pattern] = []
+
+    if branch_mode and branch_base and branch_num:
+        branch_patterns = build_branch_patterns(branch_base, branch_num)
 
     def build_entry(art):
         title = art.findtext(".//{*}ArticleTitle") or ""
@@ -482,13 +524,26 @@ def search_articles(root: ET.Element, query: str, article_mode: bool = False):
             "section_title": ctx.get("section_title"),
         }
 
-    if not term_groups:
+    if not term_groups and not branch_mode:
         return {"number_hits": [], "text_hits": []}
 
     for art in root.findall(".//{*}MainProvision//{*}Article"):
         entry = build_entry(art)
         search_raw = clean_text_display(entry["title"] + entry["caption"] + entry["full_text"])
         search_norm = normalize_num(search_raw)
+
+        if branch_mode:
+            if not branch_patterns:
+                continue
+            title_hit = matches_branch_patterns(normalize_separators(normalize_num(entry["title"])), branch_patterns)
+            text_hit = matches_branch_patterns(normalize_separators(search_norm), branch_patterns)
+            if not (title_hit or text_hit):
+                continue
+            if title_hit:
+                results_number.append(entry)
+            elif text_hit:
+                results_text.append(entry)
+            continue
 
         if not all(matches_group(search_raw, search_norm, group) for group in term_groups):
             continue
@@ -506,8 +561,11 @@ def search_articles(root: ET.Element, query: str, article_mode: bool = False):
 
 def search_both_laws(root_main, root_order, query: str):
     article_mode = "条" in query
+    branch_mode = is_branch_mode(query)
     law_hint = any(h in query for h in ("法", "建築基準法"))
     order_hint = any(h in query for h in ("令", "施行令"))
+
+    branch_base, branch_num = parse_number_token(query)
 
     if law_hint and not order_hint:
         search_law, search_order = True, False
@@ -522,9 +580,23 @@ def search_both_laws(root_main, root_order, query: str):
     }
 
     if search_law:
-        results["法"] = search_articles(root_main, query, article_mode=article_mode)
+        results["法"] = search_articles(
+            root_main,
+            query,
+            article_mode=article_mode,
+            branch_mode=branch_mode,
+            branch_base=branch_base,
+            branch_num=branch_num,
+        )
     if search_order:
-        results["令"] = search_articles(root_order, query, article_mode=article_mode)
+        results["令"] = search_articles(
+            root_order,
+            query,
+            article_mode=article_mode,
+            branch_mode=branch_mode,
+            branch_base=branch_base,
+            branch_num=branch_num,
+        )
 
     return results
 
