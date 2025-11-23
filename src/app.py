@@ -1073,12 +1073,27 @@ class Building_Code_Search(App):
 
         entry = self.index_map[event.item.id]
         rendered = entry.get("full_text") or render_article_plain(entry["title"], entry["structure"])
-        self.current_article_text = rendered
+
+        header_lines = []
+        if entry.get("law_type"):
+            header_lines.append(entry["law_type"])
+        if entry.get("chapter_title"):
+            header_lines.append(entry["chapter_title"])
+        if entry.get("section_title"):
+            header_lines.append(entry["section_title"])
+        if entry.get("caption"):
+            header_lines.append(entry["caption"])
+
+        display_text = rendered
+        if header_lines:
+            display_text = "\n".join(header_lines) + "\n\n" + rendered
+
+        self.current_article_text = display_text
 
         highlight_terms = set()
         profile = build_query_profile(self.query_input.value)
         highlight_terms.update(profile.get("highlight_terms", set()))
-        self.article_body.update(highlight_text(rendered, list(highlight_terms)))
+        self.article_body.update(highlight_text(display_text, list(highlight_terms)))
         self.set_focus(self.article_scroll)
 
     def action_all_results_copy(self):
