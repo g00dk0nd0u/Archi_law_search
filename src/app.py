@@ -2,6 +2,7 @@
 # 建築基準法／施行令の検索ビューア（構造保持版）
 import re
 import json
+import copy
 import uuid
 import traceback
 from datetime import date
@@ -215,7 +216,7 @@ def generate_number_terms(base: str, branch_hint: str | None = None) -> set[str]
 
 def build_term_groups(query: str, article_mode: bool = False) -> list[set[str]]:
     """Split query into tokens and expand each into OR groups."""
-    tokens = [tok for tok in re.split(r"\\s+", query) if tok]
+    tokens = [tok for tok in re.split(r"\s+", query) if tok]
     groups: list[set[str]] = []
     for tok in tokens:
         base, branch = parse_number_token(tok)
@@ -253,7 +254,7 @@ def is_branch_mode(query: str) -> bool:
 
 
 def build_branch_patterns(base: str, branch: str) -> list[re.Pattern]:
-    """Generate regex patterns that require 条の/条- style with exact branch."""
+    """Generate regex patterns that require 条の/条- style with exact branch (fullmatch only)."""
     try:
         base_k = int_to_kanji(int(base))
     except Exception:
@@ -266,23 +267,219 @@ def build_branch_patterns(base: str, branch: str) -> list[re.Pattern]:
     prefixes = ["", "法", "令"]
     base_variants = [
         f"{base}",
-        f"第{base}",
         f"{base_k}",
-        f"第{base_k}",
     ]
     branch_variants = [branch, branch_k]
     patterns: list[re.Pattern] = []
-    sep = r"(?:条(?:の|-|ー)|-|ー)"
+    sep = r"(?:の|ー|-)"
     for pre in prefixes:
         for b in base_variants:
             for br in branch_variants:
-                pat = rf"{pre}{b}{sep}{br}"
+                pat = rf"^{pre}第?{b}条{sep}{br}$"
                 patterns.append(re.compile(pat))
     return patterns
 
 
+def build_branch_patterns_any(base: str) -> list[re.Pattern]:
+    """Regex patterns for any branch number of given base (fullmatch)."""
+    try:
+        base_k = int_to_kanji(int(base))
+    except Exception:
+        base_k = base
+    patterns: list[re.Pattern] = []
+    sep = r"(?:の|ー|-)"
+    branch_part = r"(\d+|[一二三四五六七八九十百千〇零]+)"
+    for b in (base, base_k):
+        pat = rf"^(?:法|令)?第?{b}条{sep}{branch_part}$"
+        patterns.append(re.compile(pat))
+    return patterns
+
+
+def build_branch_search_patterns_any(base: str) -> list[re.Pattern]:
+    """Regex patterns (search) for any branch number of given base (non-anchored)."""
+    try:
+        base_k = int_to_kanji(int(base))
+    except Exception:
+        base_k = base
+    patterns: list[re.Pattern] = []
+    sep = r"(?:の|ー|-)"
+    branch_part = r"(\d+|[一二三四五六七八九十百千〇零]+)"
+    for b in (base, base_k):
+        pat = rf"(?:法|令)?第?{b}条{sep}{branch_part}"
+        patterns.append(re.compile(pat))
+    return patterns
+
+
+def build_query_profile(query: str) -> dict:
+    raw = query
+    norm = normalize_separators(normalize_num(query))
+    law_hint = ("法" in raw) or ("建築基準法" in raw)
+    order_hint = ("令" in raw) or ("施行令" in raw)
+
+    article_intent = ("条" in raw) or ("第" in raw) or bool(re.search(r"\d+条", norm))
+
+    base = branch = None
+    branch_any = False
+    m_branch = re.search(r"第?(\d+)条(?:の|ー|-)(\d+)$", norm)
+    if m_branch:
+        base, branch = m_branch.group(1), m_branch.group(2)
+    else:
+        m_branch_any = re.search(r"第?(\d+)条(?:の|ー|-)$", norm)
+        if m_branch_any:
+            base, branch_any = m_branch_any.group(1), True
+        else:
+            m_base = re.search(r"第?(\d+)条", norm)
+            if m_base:
+                base = m_base.group(1)
+
+    title_terms = set()
+    text_terms = set()
+    text_patterns: list[re.Pattern] = []
+    highlight_terms = set()
+
+    def add_term_sets(terms: set[str]):
+        title_terms.update(terms)
+        text_terms.update(terms)
+        highlight_terms.update(terms)
+
+    prefixes = ["", "法", "令"]
+    seps = ["の", "ー", "-"]
+
+    def base_variants(b: str):
+        try:
+            b_kan = int_to_kanji(int(b))
+        except Exception:
+            b_kan = b
+        return [b, b_kan]
+
+    def branch_variants(br: str):
+        try:
+            br_kan = int_to_kanji(int(br))
+        except Exception:
+            br_kan = br
+        return [br, br_kan]
+
+    if article_intent and base:
+        bvars = base_variants(base)
+        if branch:
+            brvars = branch_variants(branch)
+            terms = set()
+            for p in prefixes:
+                for b in bvars:
+                    for br in brvars:
+                        for s in seps:
+                            terms.add(f"{p}第{b}条{s}{br}")
+            add_term_sets(terms)
+            text_terms = terms.copy()
+        elif branch_any:
+            # number hits will rely on regex (branch required); terms used for highlight and text search
+            terms = set()
+            for p in prefixes:
+                for b in bvars:
+                    for s in seps:
+                        terms.add(f"{p}第{b}条{s}")
+            highlight_terms.update(terms)
+            # text search uses regex requiring branch
+            for b in bvars:
+                text_patterns.append(
+                    re.compile(rf"(?:法|令)?第?{b}条(?:の|ー|-)(\d+|[一二三四五六七八九十百千〇零]+)")
+                )
+        else:
+            terms = set()
+            for p in prefixes:
+                for b in bvars:
+                    terms.add(f"{p}第{b}条")
+            add_term_sets(terms)
+    else:
+        nums = extract_query_numbers(query)
+        if nums:
+            for num in nums:
+                bvars = base_variants(num)
+                bare_terms = set()
+                for b in bvars:
+                    bare_terms.add(b)
+                    bare_terms.add(f"第{b}条")
+                    bare_terms.add(f"法第{b}条")
+                    bare_terms.add(f"令第{b}条")
+                add_term_sets(bare_terms)
+        # include raw query as text term for loose match
+        text_terms.add(raw)
+        highlight_terms.update(text_terms)
+
+    return {
+        "raw": raw,
+        "norm": norm,
+        "law_hint": law_hint,
+        "order_hint": order_hint,
+        "article_intent": article_intent,
+        "base": base,
+        "branch": branch,
+        "branch_any": branch_any,
+        "title_terms_raw": title_terms,
+        "title_terms_norm": {normalize_separators(normalize_num(t)) for t in title_terms},
+        "text_terms_raw": text_terms,
+        "text_terms_norm": {normalize_separators(normalize_num(t)) for t in text_terms},
+        "text_patterns": text_patterns,
+        "highlight_terms": highlight_terms,
+    }
+
+
+def build_formal_patterns(base: str, branch: str | None):
+    """Return (title_patterns, text_patterns) for formal article matching."""
+    try:
+        base_k = int_to_kanji(int(base))
+    except Exception:
+        base_k = base
+    branch_k = None
+    if branch is not None:
+        try:
+            branch_k = int_to_kanji(int(branch))
+        except Exception:
+            branch_k = branch
+
+    prefixes = ["", "法", "令"]
+    title_patterns = []
+    text_patterns = []
+
+    def add_patterns(b, br):
+        if br is None:
+            title_patterns.append(re.compile(rf"^(?:法|令)?第?{b}条$"))
+            text_patterns.append(re.compile(rf"(?:法|令)?第?{b}条(?![の0-9一二三四五六七八九十百千])"))
+        else:
+            title_patterns.append(re.compile(rf"^(?:法|令)?第?{b}条(?:の|ー|-){br}$"))
+            text_patterns.append(
+                re.compile(rf"(?:法|令)?第?{b}条(?:の|ー|-){br}(?![0-9一二三四五六七八九十百千])")
+            )
+
+    add_patterns(base, branch)
+    add_patterns(base_k, branch_k)
+
+    return title_patterns, text_patterns
+
+
 def matches_branch_patterns(text: str, patterns: list[re.Pattern]) -> bool:
     return any(p.search(text) for p in patterns)
+
+
+def prune_empty(obj):
+    """Recursively remove empty values: None, '', [], {}."""
+    if obj is None:
+        return None
+    if isinstance(obj, str):
+        return obj if obj != "" else None
+    if isinstance(obj, list):
+        pruned_list = [prune_empty(x) for x in obj]
+        pruned_list = [x for x in pruned_list if x not in (None, {}, [])]
+        return pruned_list if pruned_list else None
+    if isinstance(obj, dict):
+        pruned_dict = {}
+        for k, v in obj.items():
+            pruned_val = prune_empty(v)
+            if pruned_val in (None, {}, []):
+                continue
+            pruned_dict[k] = pruned_val
+        return pruned_dict if pruned_dict else None
+    return obj
 
 
 def make_safe_id(prefix_ascii: str, title: str, i: int) -> str:
@@ -496,18 +693,37 @@ def get_article_base_number(title: str) -> str | None:
 
 # ==== 検索処理 ====
 
-def search_articles(root: ET.Element, query: str, article_mode: bool = False, branch_mode: bool = False, branch_base: str | None = None, branch_num: str | None = None):
-    """法XMLから、条番号・キーワードを検索して該当条を返す。構造付き。"""
-    term_groups = [] if branch_mode else build_term_groups(query, article_mode=article_mode)
-    number_tokens = set(extract_query_numbers(query))
+
+def search_articles_simple(root: ET.Element, profile: dict):
+    """単純化した検索ロジックで条番号一致／本文中一致を返す。"""
     results_number = []
     results_text = []
     context_map = build_article_context_map(root)
-    norm_query = normalize_separators(normalize_num(query))
-    branch_patterns: list[re.Pattern] = []
 
-    if branch_mode and branch_base and branch_num:
-        branch_patterns = build_branch_patterns(branch_base, branch_num)
+    title_terms_raw = profile["title_terms_raw"]
+    title_terms_norm = profile["title_terms_norm"]
+    text_terms_raw = profile["text_terms_raw"]
+    text_terms_norm = profile["text_terms_norm"]
+    text_patterns = profile["text_patterns"]
+
+    base = profile["base"]
+    branch = profile["branch"]
+    branch_any = profile["branch_any"]
+    article_intent = profile["article_intent"]
+
+    branch_any_anchored = build_branch_patterns_any(base) if branch_any and base else []
+    branch_any_search = build_branch_search_patterns_any(base) if branch_any and base else []
+    branch_exact_patterns = build_branch_patterns(base, branch) if (branch and base) else []
+
+    base_patterns_anchored = []
+    if article_intent and base and not branch and not branch_any:
+        try:
+            b_kan = int_to_kanji(int(base))
+        except Exception:
+            b_kan = base
+        branch_part = r"(?:(?:の|ー|-)(?:\d+|[一二三四五六七八九十百千〇零]+))?"
+        for b in (base, b_kan):
+            base_patterns_anchored.append(re.compile(rf"^(?:法|令)?第?{b}条{branch_part}$"))
 
     def build_entry(art):
         title = art.findtext(".//{*}ArticleTitle") or ""
@@ -524,79 +740,70 @@ def search_articles(root: ET.Element, query: str, article_mode: bool = False, br
             "section_title": ctx.get("section_title"),
         }
 
-    if not term_groups and not branch_mode:
-        return {"number_hits": [], "text_hits": []}
-
     for art in root.findall(".//{*}MainProvision//{*}Article"):
         entry = build_entry(art)
-        search_raw = clean_text_display(entry["title"] + entry["caption"] + entry["full_text"])
-        search_norm = normalize_num(search_raw)
+        title_raw = entry["title"]
+        title_norm = normalize_separators(normalize_num(title_raw))
+        body_raw = clean_text_display(entry["title"] + entry["caption"] + entry["full_text"])
+        body_norm = normalize_separators(normalize_num(body_raw))
 
-        if branch_mode:
-            if not branch_patterns:
-                continue
-            title_hit = matches_branch_patterns(normalize_separators(normalize_num(entry["title"])), branch_patterns)
-            text_hit = matches_branch_patterns(normalize_separators(search_norm), branch_patterns)
-            if not (title_hit or text_hit):
-                continue
-            if title_hit:
-                results_number.append(entry)
-            elif text_hit:
-                results_text.append(entry)
-            continue
-
-        if not all(matches_group(search_raw, search_norm, group) for group in term_groups):
-            continue
-
-        base_num = get_article_base_number(entry["title"])
-        is_number_hit = bool(base_num and base_num in number_tokens)
-
-        if is_number_hit:
-            results_number.append(entry)
+        # 条番号一致
+        title_match = False
+        if branch and branch_exact_patterns:
+            title_match = any(p.fullmatch(title_raw) or p.fullmatch(title_norm) for p in branch_exact_patterns)
+        elif branch_any and branch_any_anchored:
+            title_match = any(p.fullmatch(title_raw) or p.fullmatch(title_norm) for p in branch_any_anchored)
+        elif article_intent and base_patterns_anchored:
+            title_match = any(p.fullmatch(title_raw) or p.fullmatch(title_norm) for p in base_patterns_anchored)
         else:
+            if title_raw in title_terms_raw or title_norm in title_terms_norm:
+                title_match = True
+
+        if title_match:
+            results_number.append(entry)
+
+        # 本文中一致（常に実行）
+        text_hit = False
+        if branch:
+            for term in text_terms_raw:
+                if term and (term in body_raw or term in body_norm):
+                    text_hit = True
+                    break
+            if not text_hit:
+                for term in text_terms_norm:
+                    if term and (term in body_norm or term in body_raw):
+                        text_hit = True
+                        break
+            if not text_hit and text_patterns:
+                text_hit = any(p.search(body_raw) or p.search(body_norm) for p in text_patterns)
+        elif branch_any and branch_any_search:
+            text_hit = any(p.search(body_raw) or p.search(body_norm) for p in branch_any_search)
+        else:
+            if any(term and (term in body_raw or term in body_norm) for term in text_terms_raw):
+                text_hit = True
+            elif any(term and (term in body_raw or term in body_norm) for term in text_terms_norm):
+                text_hit = True
+            elif text_patterns and any(p.search(body_raw) or p.search(body_norm) for p in text_patterns):
+                text_hit = True
+
+        if text_hit:
             results_text.append(entry)
 
     return {"number_hits": results_number, "text_hits": results_text}
 
 
 def search_both_laws(root_main, root_order, query: str):
-    article_mode = "条" in query
-    branch_mode = is_branch_mode(query)
-    law_hint = any(h in query for h in ("法", "建築基準法"))
-    order_hint = any(h in query for h in ("令", "施行令"))
-
-    branch_base, branch_num = parse_number_token(query)
-
-    if law_hint and not order_hint:
-        search_law, search_order = True, False
-    elif order_hint and not law_hint:
-        search_law, search_order = False, True
-    else:
-        search_law, search_order = True, True
+    profile = build_query_profile(query)
 
     results = {
-        "法": {"number_hits": [], "text_hits": []},
-        "令": {"number_hits": [], "text_hits": []},
+        "法": search_articles_simple(root_main, profile),
+        "令": search_articles_simple(root_order, profile),
     }
 
-    if search_law:
-        results["法"] = search_articles(
-            root_main,
-            query,
-            article_mode=article_mode,
-            branch_mode=branch_mode,
-            branch_base=branch_base,
-            branch_num=branch_num,
-        )
-    if search_order:
-        results["令"] = search_articles(
-            root_order,
-            query,
-            article_mode=article_mode,
-            branch_mode=branch_mode,
-            branch_base=branch_base,
-            branch_num=branch_num,
-        )
+    if profile["law_hint"] and not profile["order_hint"]:
+        results["令"]["number_hits"] = []
+    elif profile["order_hint"] and not profile["law_hint"]:
+        results["法"]["number_hits"] = []
 
     return results
 
@@ -810,9 +1017,8 @@ class Building_Code_Search(App):
         self.current_article_text = rendered
 
         highlight_terms = set()
-        article_mode = "条" in self.query_input.value
-        for group in build_term_groups(self.query_input.value.strip(), article_mode=article_mode):
-            highlight_terms.update(group)
+        profile = build_query_profile(self.query_input.value)
+        highlight_terms.update(profile.get("highlight_terms", set()))
         self.article_body.update(highlight_text(rendered, list(highlight_terms)))
         self.set_focus(self.article_scroll)
 
@@ -821,20 +1027,21 @@ class Building_Code_Search(App):
         try:
             payload = []
             for entry in getattr(self, "display_entries", []):
-                payload.append(
-                    {
-                        "law_type": entry.get("law_type"),
-                        "chapter_title": entry.get("chapter_title"),
-                        "section_title": entry.get("section_title"),
-                        "article_title": entry.get("title"),
-                        "article_caption": entry.get("caption"),
-                        "full_text": entry.get("full_text")
-                        or render_article_plain(
-                            entry.get("title", ""), entry.get("structure") or {}
-                        ),
-                        "structure": entry.get("structure"),
-                    }
-                )
+                raw_entry = {
+                    "law_type": entry.get("law_type"),
+                    "chapter_title": entry.get("chapter_title"),
+                    "section_title": entry.get("section_title"),
+                    "article_title": entry.get("title"),
+                    "article_caption": entry.get("caption"),
+                    "full_text": entry.get("full_text")
+                    or render_article_plain(
+                        entry.get("title", ""), entry.get("structure") or {}
+                    ),
+                    "structure": entry.get("structure"),
+                }
+                cleaned = prune_empty(copy.deepcopy(raw_entry))
+                if cleaned:
+                    payload.append(cleaned)
 
             if not payload:
                 self.notify_safe("No results to copy", severity="warning")
