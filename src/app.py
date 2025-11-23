@@ -213,7 +213,7 @@ def generate_number_terms(base: str, branch_hint: str | None = None) -> set[str]
     return {x for x in expanded if x}
 
 
-def build_term_groups(query: str) -> list[set[str]]:
+def build_term_groups(query: str, article_mode: bool = False) -> list[set[str]]:
     """Split query into tokens and expand each into OR groups."""
     tokens = [tok for tok in re.split(r"\\s+", query) if tok]
     groups: list[set[str]] = []
@@ -221,9 +221,16 @@ def build_term_groups(query: str) -> list[set[str]]:
         base, branch = parse_number_token(tok)
         group: set[str] = set()
         tok_norm = normalize_separators(normalize_num(tok))
-        group.add(tok_norm)
-        if base:
-            group.update(generate_number_terms(base, branch))
+        if base and article_mode:
+            for term in generate_number_terms(base, branch):
+                if "条" in term:
+                    group.add(term)
+            if "条" in tok_norm:
+                group.add(tok_norm)
+        else:
+            group.add(tok_norm)
+            if base:
+                group.update(generate_number_terms(base, branch))
         groups.append({g for g in group if g})
     return groups
 
@@ -452,9 +459,9 @@ def get_article_base_number(title: str) -> str | None:
 
 # ==== 検索処理 ====
 
-def search_articles(root: ET.Element, query: str):
+def search_articles(root: ET.Element, query: str, article_mode: bool = False):
     """法XMLから、条番号・キーワードを検索して該当条を返す。構造付き。"""
-    term_groups = build_term_groups(query)
+    term_groups = build_term_groups(query, article_mode=article_mode)
     number_tokens = set(extract_query_numbers(query))
     results_number = []
     results_text = []
@@ -498,10 +505,28 @@ def search_articles(root: ET.Element, query: str):
 
 
 def search_both_laws(root_main, root_order, query: str):
-    return {
-        "法": search_articles(root_main, query),
-        "令": search_articles(root_order, query),
+    article_mode = "条" in query
+    law_hint = any(h in query for h in ("法", "建築基準法"))
+    order_hint = any(h in query for h in ("令", "施行令"))
+
+    if law_hint and not order_hint:
+        search_law, search_order = True, False
+    elif order_hint and not law_hint:
+        search_law, search_order = False, True
+    else:
+        search_law, search_order = True, True
+
+    results = {
+        "法": {"number_hits": [], "text_hits": []},
+        "令": {"number_hits": [], "text_hits": []},
     }
+
+    if search_law:
+        results["法"] = search_articles(root_main, query, article_mode=article_mode)
+    if search_order:
+        results["令"] = search_articles(root_order, query, article_mode=article_mode)
+
+    return results
 
 
 # ==== 漢数字変換 ====
@@ -670,6 +695,7 @@ class Building_Code_Search(App):
                 self.result_list.append(ListItem(Static(" ")))
 
         # 本文中一致
+        self.result_list.append(ListItem(Static(" ")))
         self.result_list.append(ListItem(Static("【本文中一致】")))
         has_both_text_series = buckets["本文中一致"]["法"] and buckets["本文中一致"]["令"]
         for law in ("法", "令"):
@@ -683,6 +709,9 @@ class Building_Code_Search(App):
                 self.result_list.append(item)
             if law == "法" and has_both_text_series and entries:
                 self.result_list.append(ListItem(Static(" ")))
+
+        if not (buckets["本文中一致"]["法"] or buckets["本文中一致"]["令"]):
+            self.result_list.append(ListItem(Static("該当なし")))
 
         self.set_focus(self.result_list)
 
@@ -709,7 +738,8 @@ class Building_Code_Search(App):
         self.current_article_text = rendered
 
         highlight_terms = set()
-        for group in build_term_groups(self.query_input.value.strip()):
+        article_mode = "条" in self.query_input.value
+        for group in build_term_groups(self.query_input.value.strip(), article_mode=article_mode):
             highlight_terms.update(group)
         self.article_body.update(highlight_text(rendered, list(highlight_terms)))
         self.set_focus(self.article_scroll)
