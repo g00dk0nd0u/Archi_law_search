@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # 建築基準法／施行令の検索ビューア（構造保持版）
 import re
+import json
 import uuid
 import traceback
 from datetime import date
@@ -11,7 +12,7 @@ import requests
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.containers import Vertical, VerticalScroll
-from textual.widgets import Footer, Header, Input, ListItem, ListView, Static
+from textual.widgets import Button, Footer, Header, Input, ListItem, ListView, Static
 
 LAW_MAIN_ID = "325AC0000000201"   # 建築基準法
 LAW_ORDER_ID = "325CO0000000338"  # 建築基準法施行令
@@ -271,11 +272,42 @@ def render_article_plain(title: str, struct: dict) -> str:
     return "\n".join(lines)
 
 
+# ==== 章・節コンテキスト抽出 ====
+def build_article_context_map(root: ET.Element):
+    """
+    MainProvision 内の Article ごとに章タイトル・節タイトルをマッピングする。
+    節がない場合 section_title は None。
+    """
+    context = {}
+    main_provision = root.find(".//{*}MainProvision")
+    if main_provision is None:
+        return context
+
+    for chapter in main_provision.findall("./{*}Chapter"):
+        chapter_title = chapter.findtext("./{*}ChapterTitle") or None
+
+        for section in chapter.findall("./{*}Section"):
+            section_title = section.findtext("./{*}SectionTitle") or None
+            for art in section.findall("./{*}Article"):
+                context[art] = {
+                    "chapter_title": chapter_title,
+                    "section_title": section_title or None,
+                }
+
+        for art in chapter.findall("./{*}Article"):
+            context.setdefault(
+                art, {"chapter_title": chapter_title, "section_title": None}
+            )
+
+    return context
+
+
 # ==== 検索処理 ====
 def search_articles(root: ET.Element, query: str):
     """法XMLから、条番号・キーワードを検索して該当条を返す。構造情報付き。"""
     norm_q = normalize_num(query)
     results = []
+    context_map = build_article_context_map(root)
 
     def build_entry(art):
         title = art.findtext(".//{*}ArticleTitle") or ""
@@ -283,7 +315,15 @@ def search_articles(root: ET.Element, query: str):
         text = " ".join(get_text(s) for s in art.findall(".//{*}Sentence"))
         joined = clean_text_display(title + caption + text)
         struct = extract_structure(art)
-        return {"title": title, "caption": caption, "joined": joined, "structure": struct}
+        ctx = context_map.get(art, {})
+        return {
+            "title": title,
+            "caption": caption,
+            "joined": joined,
+            "structure": struct,
+            "chapter_title": ctx.get("chapter_title"),
+            "section_title": ctx.get("section_title"),
+        }
 
     # --- 条数検索（完全一致） ---
     m = re.fullmatch(r"第?(\d+)条(?:の(\d+))?", norm_q)
@@ -319,8 +359,7 @@ def search_articles(root: ET.Element, query: str):
         joined = clean_text_display(title + caption + text)
         jn = normalize_num(joined)
         if all(any(opt in jn for opt in group) for group in key_groups):
-            struct = extract_structure(art)
-            results.append({"title": title, "caption": caption, "joined": joined, "structure": struct})
+            results.append(build_entry(art))
 
     return results
 
@@ -360,6 +399,7 @@ class Building_Code_Search(App):
     #result_list { height: 15; margin: 1; border: solid #444; }
     #article_scroll { height: 1fr; margin: 1; border: solid #444; }
     #article_body { width: 100%; padding: 1; }
+    #all_results_copy { margin: 1; }
 
     #result_list > ListItem {
         background: transparent;
@@ -390,6 +430,7 @@ class Building_Code_Search(App):
             yield ListView(id="result_list")
             self.article_body = Static("ここに本文が表示されます", id="article_body")
             yield VerticalScroll(self.article_body, id="article_scroll")
+            yield Button("All_results_Copy", id="all_results_copy")
         yield Footer()
 
     def notify_safe(self, message: str, severity: str = "information"):
@@ -457,6 +498,10 @@ class Building_Code_Search(App):
 
         self.set_focus(self.result_list)
 
+    def on_button_pressed(self, event: Button.Pressed):
+        if event.button.id == "all_results_copy":
+            self.action_all_results_copy()
+
     def on_list_view_selected(self, event: ListView.Selected):
         if not event.item or event.item.id not in self.index_map:
             return
@@ -489,6 +534,36 @@ class Building_Code_Search(App):
         terms = list(expanded_terms)
         self.article_body.update(highlight_text(rendered, terms))
         self.set_focus(self.article_scroll)
+
+    def action_all_results_copy(self):
+        """検索結果の全件をJSON配列としてクリップボードにコピーする。"""
+        try:
+            payload = []
+            for law_type, entries in getattr(self, "results", {}).items():
+                for entry in entries:
+                    payload.append(
+                        {
+                            "law_type": law_type,
+                            "chapter_title": entry.get("chapter_title"),
+                            "section_title": entry.get("section_title"),
+                            "article_title": entry.get("title"),
+                            "article_caption": entry.get("caption"),
+                            "full_text": render_article_plain(
+                                entry.get("title", ""), entry.get("structure") or {}
+                            ),
+                            "structure": entry.get("structure"),
+                        }
+                    )
+
+            if not payload:
+                self.notify_safe("No results to copy", severity="warning")
+                return
+
+            json_text = json.dumps(payload, ensure_ascii=False, indent=2)
+            pyperclip.copy(json_text)
+            self.notify_safe("📋 All results copied to clipboard", severity="information")
+        except Exception as e:
+            self.notify_safe(f"全件コピーに失敗しました: {e}", severity="error")
 
     def action_copy_article(self):
         """表示中の本文をクリップボードへコピー。"""
