@@ -1,6 +1,7 @@
 import copy
 import json
 import re
+import asyncio
 import uuid
 from datetime import date
 
@@ -8,7 +9,16 @@ import pyperclip
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.containers import Vertical, VerticalScroll
-from textual.widgets import Button, Footer, Header, Input, ListItem, ListView, Static
+from textual.widgets import (
+    Button,
+    Footer,
+    Header,
+    Input,
+    ListItem,
+    ListView,
+    LoadingIndicator,
+    Static,
+)
 
 try:
     from .laws_api import LAW_MAIN_ID, LAW_ORDER_ID, safe_fetch
@@ -98,6 +108,25 @@ class Building_Code_Search(App):
             except Exception:
                 print(f"[{severity}] {message}")
 
+    async def show_loading_indicator(self):
+        """法令データ取得中アニメーションを表示"""
+        try:
+            self.spinner = LoadingIndicator()
+            await self.mount(self.spinner)
+            await self.refresh()
+        except Exception:
+            pass
+
+    async def hide_loading_indicator(self):
+        """スピナーを安全に削除"""
+        try:
+            spinner = getattr(self, "spinner", None)
+            if spinner is not None and spinner.parent:
+                spinner.remove()
+                await self.refresh()
+        except Exception:
+            pass
+
     def scroll_to_first_hit_center(self, body_text: str, header_line_count: int, terms: set[str]):
         """本文中の最初のヒット行が画面中央に来るようスクロール（折返し考慮）"""
         if not body_text or not terms:
@@ -173,7 +202,7 @@ class Building_Code_Search(App):
     def action_focus_search(self):
         self.set_focus(self.query_input)
 
-    def on_input_submitted(self, event: Input.Submitted):
+    async def on_input_submitted(self, event: Input.Submitted):
         q = event.value.strip()
         self.result_list.clear()
         self.article_body.update("ここに本文が表示されます")
@@ -185,30 +214,29 @@ class Building_Code_Search(App):
             self.set_focus(self.result_list)
             return
 
-        if self.root_main is None or self.root_order is None:
-            self.article_body.update("法令データ取得中…")
-            self.call_after_refresh(lambda: self._perform_search(q))
-            return
+        await self._perform_search(q)
 
-        self._perform_search(q)
-
-    def _perform_search(self, q: str):
+    async def _perform_search(self, q: str):
         if self.root_main is None or self.root_order is None:
+            await self.show_loading_indicator()
             try:
                 today = date.today().strftime("%Y-%m-%d")
-                self.root_main = safe_fetch(LAW_MAIN_ID, today)
-                self.root_order = safe_fetch(LAW_ORDER_ID, today)
+                self.root_main = await asyncio.to_thread(safe_fetch, LAW_MAIN_ID, today)
+                self.root_order = await asyncio.to_thread(safe_fetch, LAW_ORDER_ID, today)
             except Exception:
                 self.result_list.append(ListItem(Static("データ取得に失敗しました")))
                 self.notify_safe("データ取得に失敗しました", severity="error")
                 self.set_focus(self.result_list)
+                await self.hide_loading_indicator()
                 return
 
             if any(root is None or getattr(root, "tag", "") == "Root" for root in (self.root_main, self.root_order)):
                 self.result_list.append(ListItem(Static("データ取得に失敗しました")))
                 self.notify_safe("データ取得に失敗しました", severity="error")
                 self.set_focus(self.result_list)
+                await self.hide_loading_indicator()
                 return
+            await self.hide_loading_indicator()
 
         raw_results = search_both_laws(self.root_main, self.root_order, q)
         has_any = any(

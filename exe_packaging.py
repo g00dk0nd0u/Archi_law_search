@@ -44,6 +44,16 @@ def build_exe(onefile: bool) -> None:
     if not MAIN_SCRIPT.exists():
         raise FileNotFoundError(f"Main script not found: {MAIN_SCRIPT}")
 
+    hidden_imports = [
+        "app",
+        "laws_api",
+        "number_text_utils",
+        "search_logic",
+        "structure_extract",
+        "text_utils",
+        "ui_app",
+    ]
+
     cmd = [
         sys.executable,
         "-m",
@@ -53,11 +63,16 @@ def build_exe(onefile: bool) -> None:
         "--noconfirm",
         "--name",
         "building_code_search",
+        "--paths",
+        str(ROOT / "src"),
         "--collect-all",
         "textual",
         "--collect-all",
         "rich",
     ]
+
+    for mod in hidden_imports:
+        cmd.extend(["--hidden-import", mod])
 
     if onefile:
         cmd.append("--onefile")
