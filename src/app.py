@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 # 建築基準法／施行令の検索ビューア（構造保持版）
-import json
 import re
 import uuid
 import traceback
@@ -220,7 +219,56 @@ def render_structure(title: str, struct: dict) -> str:
     pruned_structure = prune(pruned_struct)
     if pruned_structure:
         payload["structure"] = pruned_structure
-    return json.dumps(payload, ensure_ascii=False, indent=2)
+    # JSON文字列表示は不要になったが互換のため残す
+    import json as _json
+    return _json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def render_article_plain(title: str, struct: dict) -> str:
+    """
+    XML由来の階層構造をプレーンテキストに整形して返す。
+    改行のみで区切り、空行は作らない。
+    """
+    lines = []
+
+    # 1) タイトル行
+    lines.append(title)
+
+    paragraphs = struct.get("paragraphs") or []
+    for para in paragraphs:
+        # Paragraph本体
+        pnum = para.get("paragraph_number")
+        p_sentences = (para.get("paragraph_sentence") or {}).get("sentences") or []
+        p_body = " ".join(s for s in p_sentences if s)
+        if p_body:
+            prefix = f"{pnum}　　" if pnum else ""
+            lines.append(f"{prefix}{p_body}")
+
+        # Items
+        items = para.get("items") or []
+        for item in items:
+            num = item.get("number")
+            body_list = (item.get("sentences") or {}).get("sentences") or []
+            body = " ".join(s for s in body_list if s)
+            if body and num:
+                lines.append(f"{num}　　{body}")
+            elif body:
+                lines.append(body)
+
+            # subitems1
+            subitems1 = item.get("subitems1") or []
+            for sub in subitems1:
+                snum = sub.get("number")
+                s_body_list = (sub.get("sentences") or {}).get("sentences") or []
+                s_body = " ".join(s for s in s_body_list if s)
+                if not s_body:
+                    continue
+                if snum:
+                    lines.append(f"  {snum}　　{s_body}")
+                else:
+                    lines.append(f"  {s_body}")
+
+    return "\n".join(lines)
 
 
 # ==== 検索処理 ====
@@ -425,7 +473,7 @@ class Building_Code_Search(App):
 
         law_type, idx = self.index_map[event.item.id]
         entry = self.results[law_type][idx]
-        rendered = render_structure(entry["title"], entry["structure"])
+        rendered = render_article_plain(entry["title"], entry["structure"])
         self.current_article_text = rendered
 
         raw_terms = [normalize_num(t) for t in self.query_input.value.strip().split()]
