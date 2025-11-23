@@ -915,6 +915,66 @@ class Building_Code_Search(App):
             except Exception:
                 print(f"[{severity}] {message}")
 
+
+    def scroll_to_first_hit_center(self, body_text: str, header_line_count: int, terms: set[str]):
+        """本文中の最初のヒット行が画面中央に来るようスクロール（折返し考慮）"""
+        if not body_text or not terms:
+            return
+
+        from rich.console import Console
+        from rich.cells import cell_len
+        from rich.text import Text as RichText
+
+        # 画面幅（セル幅）を取得。paddingぶん少し引いて安全側に
+        width = max(10, (self.article_scroll.size.width or 0) - 2)
+        console = Console(width=width, record=False)
+
+        # 最初に出てくるマッチ位置（文字index）を探す
+        first_pos = None
+        first_term = None
+        for term in terms:
+            if not term:
+                continue
+            for t0 in {term, normalize_num(term)}:
+                m = re.search(re.escape(t0), body_text)
+                if m:
+                    pos = m.start()
+                    if first_pos is None or pos < first_pos:
+                        first_pos = pos
+                        first_term = t0
+
+        if first_pos is None:
+            return
+
+        prefix_text = body_text[:first_pos]
+        match_line_idx = prefix_text.count("\n")
+        col_text = prefix_text.split("\n")[-1]  # マッチ行内での位置（文字列）
+
+        lines = body_text.splitlines()
+
+        # 1) マッチ行より上の「実表示行数（折返し後）」を合算
+        visual_before = 0
+        for l in lines[:match_line_idx]:
+            visual_before += len(RichText(l).wrap(console, width))
+
+        # 2) マッチ行内でも、折返しのどの段にいるか算出
+        wrapped_match = RichText(lines[match_line_idx] if match_line_idx < len(lines) else "").wrap(console, width)
+        col_cells = cell_len(col_text)
+        acc = 0
+        sub_offset = 0
+        for i, wline in enumerate(wrapped_match):
+            acc += cell_len(wline.plain)
+            if acc > col_cells:
+                sub_offset = i
+                break
+
+        target_visual_line = header_line_count + visual_before + sub_offset
+
+        viewport_h = max(1, self.article_scroll.size.height)
+        target_y = max(0, target_visual_line - viewport_h // 2)
+
+        self.article_scroll.scroll_to(y=target_y, animate=True, force=True)
+
     def on_mount(self):
         self.root_main = None
         self.root_order = None
@@ -1095,6 +1155,15 @@ class Building_Code_Search(App):
         highlight_terms.update(profile.get("highlight_terms", set()))
         self.article_body.update(highlight_text(display_text, list(highlight_terms)))
         self.set_focus(self.article_scroll)
+
+        # ヘッダの行数を数える（本文検索は rendered のみ）
+        header_block = ("\n".join(header_lines) + "\n\n") if header_lines else ""
+        header_line_count = header_block.count("\n")
+
+        # レイアウト確定後にスクロール
+        self.call_after_refresh(
+            lambda: self.scroll_to_first_hit_center(rendered, header_line_count, highlight_terms)
+        )
 
     def action_all_results_copy(self):
         """検索結果の全件をJSON配列としてクリップボードにコピーする。"""
