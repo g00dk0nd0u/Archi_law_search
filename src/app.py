@@ -102,6 +102,145 @@ def normalize_num(t: str) -> str:
     return t
 
 
+DASH_TRANSLATE = str.maketrans(
+    {
+        "－": "-",
+        "ー": "-",
+        "―": "-",
+        "‐": "-",
+        "‑": "-",
+        "–": "-",
+        "—": "-",
+        "〜": "-",
+        "～": "-",
+    }
+)
+
+
+def normalize_separators(t: str) -> str:
+    """Normalize separator-like characters (various dashes) to a plain hyphen."""
+    if not t:
+        return ""
+    return t.translate(DASH_TRANSLATE)
+
+
+def extract_query_numbers(query: str) -> list[str]:
+    """Extract base article numbers from the query, tolerant of prefixes/suffixes."""
+    q = normalize_separators(normalize_num(query))
+    q = re.sub(r"[法第条]", "", q)
+    q = q.replace("の", "-")
+    numbers: list[str] = []
+    for piece in re.split(r"[^0-9-]+", q):
+        if not piece:
+            continue
+        m = re.match(r"(\d+)(?:-(\d+))?", piece)
+        if m:
+            numbers.append(m.group(1))
+            continue
+        numbers.extend(re.findall(r"\d+", piece))
+    seen = set()
+    deduped = []
+    for n in numbers:
+        if n not in seen:
+            seen.add(n)
+            deduped.append(n)
+    return deduped
+
+
+def parse_number_token(token: str) -> tuple[str | None, str | None]:
+    """Parse a single token and return (base, branch) if it contains a number."""
+    t = normalize_separators(normalize_num(token))
+    stripped = re.sub(r"[法第条]", "", t)
+    stripped = stripped.replace("の", "-")
+    m = re.search(r"(\d+)(?:-(\d+))?", stripped)
+    if not m:
+        return None, None
+    return m.group(1), m.group(2)
+
+
+def generate_number_terms(base: str, branch_hint: str | None = None) -> set[str]:
+    """Generate related search terms for a given article number."""
+    terms: set[str] = set()
+    try:
+        n_int = int(base)
+    except ValueError:
+        return terms
+    kan = int_to_kanji(n_int)
+    base_forms = {
+        base,
+        f"{base}条",
+        f"第{base}条",
+        f"{kan}",
+        f"{kan}条",
+        f"第{kan}条",
+        f"法第{base}条",
+        f"令第{base}条",
+        f"法第{kan}条",
+        f"令第{kan}条",
+        f"第{base}条の",
+        f"第{kan}条の",
+        f"法第{base}条の",
+        f"令第{base}条の",
+    }
+    terms.update(base_forms)
+
+    branch_candidates: list[str] = []
+    if branch_hint:
+        branch_candidates.append(branch_hint)
+    branch_candidates.extend([str(i) for i in range(1, 11)])
+
+    for b in branch_candidates:
+        try:
+            b_int = int(b)
+        except ValueError:
+            continue
+        b_kan = int_to_kanji(b_int)
+        terms.update(
+            {
+                f"第{base}条の{b}",
+                f"第{kan}条の{b}",
+                f"第{base}条の{b_kan}",
+                f"第{kan}条の{b_kan}",
+                f"法第{base}条の{b}",
+                f"令第{base}条の{b}",
+            }
+        )
+
+    expanded = set()
+    for t in terms:
+        expanded.add(t)
+        expanded.add(normalize_num(t))
+    return {x for x in expanded if x}
+
+
+def build_term_groups(query: str) -> list[set[str]]:
+    """Split query into tokens and expand each into OR groups."""
+    tokens = [tok for tok in re.split(r"\\s+", query) if tok]
+    groups: list[set[str]] = []
+    for tok in tokens:
+        base, branch = parse_number_token(tok)
+        group: set[str] = set()
+        tok_norm = normalize_separators(normalize_num(tok))
+        group.add(tok_norm)
+        if base:
+            group.update(generate_number_terms(base, branch))
+        groups.append({g for g in group if g})
+    return groups
+
+
+def matches_group(raw_text: str, norm_text: str, terms: set[str]) -> bool:
+    """Check whether any term in the group matches raw or normalized text."""
+    for term in terms:
+        if not term:
+            continue
+        norm_term = normalize_num(term)
+        if term in raw_text or norm_term in raw_text:
+            return True
+        if term in norm_text or norm_term in norm_text:
+            return True
+    return False
+
+
 def make_safe_id(prefix_ascii: str, title: str, i: int) -> str:
     n = normalize_num(title)
     safe = re.sub(r"[^0-9A-Za-z_-]+", "_", n)
@@ -302,66 +441,60 @@ def build_article_context_map(root: ET.Element):
     return context
 
 
+def get_article_base_number(title: str) -> str | None:
+    """ArticleTitle から条の基番号（数字）を抽出する。"""
+    t_norm = normalize_num(title)
+    m = re.search(r"第(\d+)条", t_norm)
+    if m:
+        return m.group(1)
+    return None
+
+
 # ==== 検索処理 ====
+
 def search_articles(root: ET.Element, query: str):
-    """法XMLから、条番号・キーワードを検索して該当条を返す。構造情報付き。"""
-    norm_q = normalize_num(query)
-    results = []
+    """法XMLから、条番号・キーワードを検索して該当条を返す。構造付き。"""
+    term_groups = build_term_groups(query)
+    number_tokens = set(extract_query_numbers(query))
+    results_number = []
+    results_text = []
     context_map = build_article_context_map(root)
 
     def build_entry(art):
         title = art.findtext(".//{*}ArticleTitle") or ""
         caption = art.findtext(".//{*}ArticleCaption") or ""
-        text = " ".join(get_text(s) for s in art.findall(".//{*}Sentence"))
-        joined = clean_text_display(title + caption + text)
         struct = extract_structure(art)
+        full_plain = render_article_plain(title, struct)
         ctx = context_map.get(art, {})
         return {
             "title": title,
             "caption": caption,
-            "joined": joined,
             "structure": struct,
+            "full_text": full_plain,
             "chapter_title": ctx.get("chapter_title"),
             "section_title": ctx.get("section_title"),
         }
 
-    # --- 条数検索（完全一致） ---
-    m = re.fullmatch(r"第?(\d+)条(?:の(\d+))?", norm_q)
-    if m:
-        base, sub = m.group(1), m.group(2)
-        for art in root.findall(".//{*}MainProvision//{*}Article"):
-            title = art.findtext(".//{*}ArticleTitle") or ""
-            t_norm = normalize_num(title)
-            if t_norm.startswith(f"第{base}条") and (not sub or f"の{sub}" in t_norm):
-                results.append(build_entry(art))
-        return results
-
-    # --- 通常キーワード検索 ---
-    tokens = [normalize_num(k) for k in query.strip().split()]
-    if not tokens:
-        return results
-
-    key_groups = []
-    for tok in tokens:
-        opts = {tok}
-        if tok.isdigit():
-            opts.update({
-                f"第{tok}条", f"第{tok}条の",
-                f"法第{tok}条", f"令第{tok}条",
-                f"法第{tok}条の", f"令第{tok}条の",
-            })
-        key_groups.append(opts)
+    if not term_groups:
+        return {"number_hits": [], "text_hits": []}
 
     for art in root.findall(".//{*}MainProvision//{*}Article"):
-        title = art.findtext(".//{*}ArticleTitle") or ""
-        caption = art.findtext(".//{*}ArticleCaption") or ""
-        text = " ".join(get_text(s) for s in art.findall(".//{*}Sentence"))
-        joined = clean_text_display(title + caption + text)
-        jn = normalize_num(joined)
-        if all(any(opt in jn for opt in group) for group in key_groups):
-            results.append(build_entry(art))
+        entry = build_entry(art)
+        search_raw = clean_text_display(entry["title"] + entry["caption"] + entry["full_text"])
+        search_norm = normalize_num(search_raw)
 
-    return results
+        if not all(matches_group(search_raw, search_norm, group) for group in term_groups):
+            continue
+
+        base_num = get_article_base_number(entry["title"])
+        is_number_hit = bool(base_num and base_num in number_tokens)
+
+        if is_number_hit:
+            results_number.append(entry)
+        else:
+            results_text.append(entry)
+
+    return {"number_hits": results_number, "text_hits": results_text}
 
 
 def search_both_laws(root_main, root_order, query: str):
@@ -447,7 +580,8 @@ class Building_Code_Search(App):
         today = date.today().strftime("%Y-%m-%d")
         self.root_main = safe_fetch(LAW_MAIN_ID, today)
         self.root_order = safe_fetch(LAW_ORDER_ID, today)
-        self.results = {"法": [], "令": []}
+        self.results = {"法": {"number_hits": [], "text_hits": []}, "令": {"number_hits": [], "text_hits": []}}
+        self.display_entries = []
 
         self.query_input = self.query_one("#query_input", Input)
         self.result_list = self.query_one("#result_list", ListView)
@@ -465,36 +599,90 @@ class Building_Code_Search(App):
         self.result_list.clear()
         self.article_body.update("ここに本文が表示されます")
         self.index_map.clear()
+        self.display_entries = []
 
         if not q:
             self.result_list.append(ListItem(Static("❗ キーワードを入力してください")))
             self.set_focus(self.result_list)
             return
 
-        self.results = search_both_laws(self.root_main, self.root_order, q)
-        if not (self.results["法"] or self.results["令"]):
+        raw_results = search_both_laws(self.root_main, self.root_order, q)
+        has_any = any(
+            raw_results[law]["number_hits"] or raw_results[law]["text_hits"]
+            for law in ("法", "令")
+        )
+        if not has_any:
             self.result_list.append(ListItem(Static("該当なし")))
             self.set_focus(self.result_list)
             return
 
-        if self.results["法"]:
-            self.result_list.append(ListItem(Static("【建築基準法】")))
-            for i, entry in enumerate(self.results["法"]):
-                label = f"法 {entry['title']} {entry['caption'].strip() if entry['caption'] else ''}"
-                item_id = make_safe_id("LAW", entry["title"], i)
-                item = ListItem(Static(label), id=item_id)
-                self.index_map[item_id] = ("法", i)
-                self.result_list.append(item)
+        total_raw = sum(
+            len(raw_results[law]["number_hits"]) + len(raw_results[law]["text_hits"])
+            for law in ("法", "令")
+        )
+        limit = 100
+        truncated = total_raw > limit
+        buckets = {
+            "条番号一致": {"法": [], "令": []},
+            "本文中一致": {"法": [], "令": []},
+        }
 
-        if self.results["令"]:
-            self.result_list.append(ListItem(Static(" ")))
-            self.result_list.append(ListItem(Static("【建築基準法施行令】")))
-            for i, entry in enumerate(self.results["令"]):
-                label = f"令 {entry['title']} {entry['caption'].strip() if entry['caption'] else ''}"
-                item_id = make_safe_id("ORDER", entry["title"], i)
+        count = 0
+        reached_limit = False
+        for category, key in (("条番号一致", "number_hits"), ("本文中一致", "text_hits")):
+            for law in ("法", "令"):
+                for entry in raw_results[law][key]:
+                    if count >= limit:
+                        reached_limit = True
+                        break
+                    entry_copy = dict(entry)
+                    entry_copy["law_type"] = law
+                    entry_copy["category"] = category
+                    buckets[category][law].append(entry_copy)
+                    self.display_entries.append(entry_copy)
+                    count += 1
+                if reached_limit:
+                    break
+            if reached_limit:
+                break
+
+        if reached_limit:
+            truncated = True
+
+        self.results = buckets
+
+        if truncated:
+            self.result_list.append(ListItem(Static("100件を超えるため上位100件のみ表示")))
+
+        # 条番号一致
+        self.result_list.append(ListItem(Static("【条番号一致】")))
+        has_both_number_series = buckets["条番号一致"]["法"] and buckets["条番号一致"]["令"]
+        for law in ("法", "令"):
+            prefix = "LAW" if law == "法" else "ORDER"
+            entries = buckets["条番号一致"][law]
+            for entry in entries:
+                label = f"{law} {entry['title']}"
+                item_id = make_safe_id(f"{prefix}_NUM", entry["title"], len(self.index_map))
                 item = ListItem(Static(label), id=item_id)
-                self.index_map[item_id] = ("令", i)
+                self.index_map[item_id] = entry
                 self.result_list.append(item)
+            if law == "法" and has_both_number_series and entries:
+                self.result_list.append(ListItem(Static(" ")))
+
+        # 本文中一致
+        self.result_list.append(ListItem(Static("【本文中一致】")))
+        has_both_text_series = buckets["本文中一致"]["法"] and buckets["本文中一致"]["令"]
+        for law in ("法", "令"):
+            prefix = "LAW" if law == "法" else "ORDER"
+            entries = buckets["本文中一致"][law]
+            for entry in entries:
+                label = f"{law} {entry['title']}"
+                item_id = make_safe_id(f"{prefix}_TXT", entry["title"], len(self.index_map))
+                item = ListItem(Static(label), id=item_id)
+                self.index_map[item_id] = entry
+                self.result_list.append(item)
+            if law == "法" and has_both_text_series and entries:
+                self.result_list.append(ListItem(Static(" ")))
 
         self.set_focus(self.result_list)
 
@@ -516,44 +704,35 @@ class Building_Code_Search(App):
         except Exception:
             pass
 
-        law_type, idx = self.index_map[event.item.id]
-        entry = self.results[law_type][idx]
-        rendered = render_article_plain(entry["title"], entry["structure"])
+        entry = self.index_map[event.item.id]
+        rendered = entry.get("full_text") or render_article_plain(entry["title"], entry["structure"])
         self.current_article_text = rendered
 
-        raw_terms = [normalize_num(t) for t in self.query_input.value.strip().split()]
-        expanded_terms = set()
-        for t in raw_terms:
-            expanded_terms.add(t)
-            if t.isdigit():
-                kan = int_to_kanji(int(t))
-                expanded_terms.update({
-                    f"{t}", f"第{t}条", f"第{t}条の",
-                    f"{kan}", f"第{kan}条", f"第{kan}条の"
-                })
-        terms = list(expanded_terms)
-        self.article_body.update(highlight_text(rendered, terms))
+        highlight_terms = set()
+        for group in build_term_groups(self.query_input.value.strip()):
+            highlight_terms.update(group)
+        self.article_body.update(highlight_text(rendered, list(highlight_terms)))
         self.set_focus(self.article_scroll)
 
     def action_all_results_copy(self):
         """検索結果の全件をJSON配列としてクリップボードにコピーする。"""
         try:
             payload = []
-            for law_type, entries in getattr(self, "results", {}).items():
-                for entry in entries:
-                    payload.append(
-                        {
-                            "law_type": law_type,
-                            "chapter_title": entry.get("chapter_title"),
-                            "section_title": entry.get("section_title"),
-                            "article_title": entry.get("title"),
-                            "article_caption": entry.get("caption"),
-                            "full_text": render_article_plain(
-                                entry.get("title", ""), entry.get("structure") or {}
-                            ),
-                            "structure": entry.get("structure"),
-                        }
-                    )
+            for entry in getattr(self, "display_entries", []):
+                payload.append(
+                    {
+                        "law_type": entry.get("law_type"),
+                        "chapter_title": entry.get("chapter_title"),
+                        "section_title": entry.get("section_title"),
+                        "article_title": entry.get("title"),
+                        "article_caption": entry.get("caption"),
+                        "full_text": entry.get("full_text")
+                        or render_article_plain(
+                            entry.get("title", ""), entry.get("structure") or {}
+                        ),
+                        "structure": entry.get("structure"),
+                    }
+                )
 
             if not payload:
                 self.notify_safe("No results to copy", severity="warning")
