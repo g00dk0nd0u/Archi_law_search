@@ -320,6 +320,7 @@ def build_query_profile(query: str) -> dict:
 
     base = branch = None
     branch_any = False
+    number_bases: list[str] = []
     m_branch = re.search(r"第?(\d+)条(?:の|ー|-)(\d+)$", norm)
     if m_branch:
         base, branch = m_branch.group(1), m_branch.group(2)
@@ -331,6 +332,14 @@ def build_query_profile(query: str) -> dict:
             m_base = re.search(r"第?(\d+)条", norm)
             if m_base:
                 base = m_base.group(1)
+    if base:
+        number_bases.append(base)
+    elif not article_intent:
+        number_bases.extend(extract_query_numbers(query))
+    if not article_intent and number_bases:
+        article_intent = True
+    if base is None and number_bases:
+        base = number_bases[0]
 
     title_terms = set()
     text_terms = set()
@@ -391,7 +400,7 @@ def build_query_profile(query: str) -> dict:
                     terms.add(f"{p}第{b}条")
             add_term_sets(terms)
     else:
-        nums = extract_query_numbers(query)
+        nums = number_bases or extract_query_numbers(query)
         if nums:
             for num in nums:
                 bvars = base_variants(num)
@@ -415,6 +424,7 @@ def build_query_profile(query: str) -> dict:
         "base": base,
         "branch": branch,
         "branch_any": branch_any,
+        "number_bases": number_bases,
         "title_terms_raw": title_terms,
         "title_terms_norm": {normalize_separators(normalize_num(t)) for t in title_terms},
         "text_terms_raw": text_terms,
@@ -710,32 +720,38 @@ def search_articles_simple(root: ET.Element, profile: dict):
     branch = profile["branch"]
     branch_any = profile["branch_any"]
     article_intent = profile["article_intent"]
+    number_bases = profile.get("number_bases", [])
 
     branch_any_anchored = build_branch_patterns_any(base) if branch_any and base else []
     branch_any_search = build_branch_search_patterns_any(base) if branch_any and base else []
     branch_exact_patterns = build_branch_patterns(base, branch) if (branch and base) else []
 
     base_patterns_anchored = []
-    if article_intent and base and not branch and not branch_any:
-        try:
-            b_kan = int_to_kanji(int(base))
-        except Exception:
-            b_kan = base
-        branch_part = r"(?:(?:の|ー|-)(?:\d+|[一二三四五六七八九十百千〇零]+))?"
-        for b in (base, b_kan):
-            base_patterns_anchored.append(re.compile(rf"^(?:法|令)?第?{b}条{branch_part}$"))
+    if article_intent or number_bases:
+        bases = [base] if base else number_bases
+        for b_base in bases:
+            try:
+                b_kan = int_to_kanji(int(b_base))
+            except Exception:
+                b_kan = b_base
+            branch_part = r"(?:(?:の|ー|-)(?:\d+|[一二三四五六七八九十百千〇零]+))?"
+            for b in (b_base, b_kan):
+                base_patterns_anchored.append(re.compile(rf"^(?:法|令)?第?{b}条{branch_part}$"))
 
     def build_entry(art):
         title = art.findtext(".//{*}ArticleTitle") or ""
         caption = art.findtext(".//{*}ArticleCaption") or ""
         struct = extract_structure(art)
         full_plain = render_article_plain(title, struct)
+        body_lines = full_plain.splitlines()
+        body_plain = "\n".join(body_lines[1:]) if len(body_lines) > 1 else ""
         ctx = context_map.get(art, {})
         return {
             "title": title,
             "caption": caption,
             "structure": struct,
             "full_text": full_plain,
+            "body_text": body_plain,
             "chapter_title": ctx.get("chapter_title"),
             "section_title": ctx.get("section_title"),
         }
@@ -744,7 +760,8 @@ def search_articles_simple(root: ET.Element, profile: dict):
         entry = build_entry(art)
         title_raw = entry["title"]
         title_norm = normalize_separators(normalize_num(title_raw))
-        body_raw = clean_text_display(entry["title"] + entry["caption"] + entry["full_text"])
+        body_source = entry.get("body_text") or ""
+        body_raw = clean_text_display(entry["caption"] + body_source)
         body_norm = normalize_separators(normalize_num(body_raw))
 
         # 条番号一致
@@ -753,8 +770,16 @@ def search_articles_simple(root: ET.Element, profile: dict):
             title_match = any(p.fullmatch(title_raw) or p.fullmatch(title_norm) for p in branch_exact_patterns)
         elif branch_any and branch_any_anchored:
             title_match = any(p.fullmatch(title_raw) or p.fullmatch(title_norm) for p in branch_any_anchored)
-        elif article_intent and base_patterns_anchored:
+        elif (article_intent or number_bases) and base_patterns_anchored:
             title_match = any(p.fullmatch(title_raw) or p.fullmatch(title_norm) for p in base_patterns_anchored)
+            if not title_match and base:
+                try:
+                    base_kan = int_to_kanji(int(base))
+                except Exception:
+                    base_kan = base
+                fallback_pat = re.compile(rf"^(?:法|令)?第?(?:{base}|{base_kan})条(?:の|ー|-)?\d*$")
+                if fallback_pat.match(title_norm):
+                    title_match = True
         else:
             if title_raw in title_terms_raw or title_norm in title_terms_norm:
                 title_match = True
