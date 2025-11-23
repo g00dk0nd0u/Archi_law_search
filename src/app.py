@@ -622,8 +622,14 @@ def render_article_plain(title: str, struct: dict) -> str:
     """
     lines = []
 
+    def append_numbered(lines_list, line):
+        if lines_list and lines_list[-1] != "":
+            lines_list.append("")
+        lines_list.append(line)
+
     # 1) タイトル行
     lines.append(title)
+    lines.append("")
 
     paragraphs = struct.get("paragraphs") or []
     for para in paragraphs:
@@ -633,7 +639,11 @@ def render_article_plain(title: str, struct: dict) -> str:
         p_body = " ".join(s for s in p_sentences if s)
         if p_body:
             prefix = f"{pnum}　　" if pnum else ""
-            lines.append(f"{prefix}{p_body}")
+            line = f"{prefix}{p_body}"
+            if pnum:
+                append_numbered(lines, line)
+            else:
+                lines.append(line)
 
         # Items
         items = para.get("items") or []
@@ -642,7 +652,7 @@ def render_article_plain(title: str, struct: dict) -> str:
             body_list = (item.get("sentences") or {}).get("sentences") or []
             body = " ".join(s for s in body_list if s)
             if body and num:
-                lines.append(f"{num}　　{body}")
+                append_numbered(lines, f"{num}　　{body}")
             elif body:
                 lines.append(body)
 
@@ -655,7 +665,7 @@ def render_article_plain(title: str, struct: dict) -> str:
                 if not s_body:
                     continue
                 if snum:
-                    lines.append(f"  {snum}　　{s_body}")
+                    append_numbered(lines, f"  {snum}　　{s_body}")
                 else:
                     lines.append(f"  {s_body}")
 
