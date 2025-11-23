@@ -916,9 +916,8 @@ class Building_Code_Search(App):
                 print(f"[{severity}] {message}")
 
     def on_mount(self):
-        today = date.today().strftime("%Y-%m-%d")
-        self.root_main = safe_fetch(LAW_MAIN_ID, today)
-        self.root_order = safe_fetch(LAW_ORDER_ID, today)
+        self.root_main = None
+        self.root_order = None
         self.results = {"法": {"number_hits": [], "text_hits": []}, "令": {"number_hits": [], "text_hits": []}}
         self.display_entries = []
 
@@ -944,6 +943,31 @@ class Building_Code_Search(App):
             self.result_list.append(ListItem(Static("❗ キーワードを入力してください")))
             self.set_focus(self.result_list)
             return
+
+        if self.root_main is None or self.root_order is None:
+            self.article_body.update("法令データ取得中…")
+            self.call_after_refresh(lambda: self._perform_search(q))
+            return
+
+        self._perform_search(q)
+
+    def _perform_search(self, q: str):
+        if self.root_main is None or self.root_order is None:
+            try:
+                today = date.today().strftime("%Y-%m-%d")
+                self.root_main = safe_fetch(LAW_MAIN_ID, today)
+                self.root_order = safe_fetch(LAW_ORDER_ID, today)
+            except Exception:
+                self.result_list.append(ListItem(Static("データ取得に失敗しました")))
+                self.notify_safe("データ取得に失敗しました", severity="error")
+                self.set_focus(self.result_list)
+                return
+
+            if any(root is None or getattr(root, "tag", "") == "Root" for root in (self.root_main, self.root_order)):
+                self.result_list.append(ListItem(Static("データ取得に失敗しました")))
+                self.notify_safe("データ取得に失敗しました", severity="error")
+                self.set_focus(self.result_list)
+                return
 
         raw_results = search_both_laws(self.root_main, self.root_order, q)
         has_any = any(
@@ -1072,7 +1096,6 @@ class Building_Code_Search(App):
                     or render_article_plain(
                         entry.get("title", ""), entry.get("structure") or {}
                     ),
-                    "structure": entry.get("structure"),
                 }
                 cleaned = prune_empty(copy.deepcopy(raw_entry))
                 if cleaned:
