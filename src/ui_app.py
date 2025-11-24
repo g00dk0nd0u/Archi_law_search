@@ -60,12 +60,46 @@ class Building_Code_Search(App):
     CSS = """
 
     Screen { layout: vertical; background: #0f0f12; color: #e8e8e8; }
+    #main_area {
+        height: 1fr;
+        min-height: 0;
+        margin: 0 1;
+    }
+
     #query_input { margin: 1; }
-    #result_list { height: 15; margin: 1; border: solid #444; }
-    #article_scroll { height: 1fr; margin: 1; border: solid #444; }
+
+    #actions_bar {
+        height: auto;
+        padding: 0 1;
+        background: #0f0f12;
+    }
+
+    #actions_bar > Button {
+        margin: 0 1;
+        background: #222;
+        color: #e8e8e8;
+    }
+    #actions_bar > Button:hover {
+        background: #ff8800;
+        color: black;
+    }
+
+    #result_list {
+        height: 12;
+        margin: 1 0;
+        border: solid #444;
+        width: 100%;
+    }
+
+    #article_scroll {
+        height: 1fr;
+        min-height: 0;
+        margin: 1 0;
+        border: solid #444;
+        width: 100%;
+    }
+
     #article_body { width: 100%; padding: 1; }
-    #all_results_copy { margin: 1; }
-    #single_results_copy { margin: 1; }
 
     #result_list > ListItem {
         background: transparent;
@@ -91,14 +125,17 @@ class Building_Code_Search(App):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Vertical():
+
+        with Vertical(id="main_area"):
             yield Input(placeholder="検索キーワードを入力 (例: 111条 / 耐火構造)", id="query_input")
+            with Horizontal(id="actions_bar"):
+                yield Button("All Results Copy", id="all_results_copy")
+                yield Button("Single Result Copy", id="single_results_copy")
             yield ListView(id="result_list")
-            self.article_body = Static("ここに本文が表示されます", id="article_body")
-            yield VerticalScroll(self.article_body, id="article_scroll")
-            with Horizontal():
-                yield Button("All_results_Copy", id="all_results_copy")
-                yield Button("Single_results_Copy", id="single_results_copy")
+            with VerticalScroll(id="article_scroll"):
+                self.article_body = Static("ここに本文が表示されます", id="article_body")
+                yield self.article_body
+
         yield Footer()
 
     def notify_safe(self, message: str, severity: str = "information"):
@@ -139,8 +176,12 @@ class Building_Code_Search(App):
         from rich.cells import cell_len
         from rich.text import Text as RichText
 
+        scroll_widget = getattr(self, "article_scroll", None)
+        if scroll_widget is None:
+            return
+
         # 画面幅（セル幅）を取得。paddingぶん少し引いて安全側に
-        width = max(10, (self.article_scroll.size.width or 0) - 2)
+        width = max(10, (scroll_widget.size.width or 0) - 2)
         console = Console(width=width, record=False)
 
         # 最初に出てくるマッチ位置（文字index）を探す
@@ -183,10 +224,10 @@ class Building_Code_Search(App):
 
         target_visual_line = header_line_count + visual_before + sub_offset
 
-        viewport_h = max(1, self.article_scroll.size.height)
+        viewport_h = max(1, scroll_widget.size.height)
         target_y = max(0, target_visual_line - viewport_h // 2)
 
-        self.article_scroll.scroll_to(y=target_y, animate=True, force=True)
+        scroll_widget.scroll_to(y=target_y, animate=True, force=True)
 
     def on_mount(self):
         self.root_main = None

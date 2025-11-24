@@ -19,11 +19,16 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
 MAIN_SCRIPT = ROOT / "src" / "app.py"
+BUILD_ROOT = Path(tempfile.gettempdir()) / "archi_law_search_build"
+WORKPATH = BUILD_ROOT / "work"
+DOWNLOADS = Path.home() / "Downloads"
+DISTPATH = DOWNLOADS / "building_code_search_dist"
 
 
 def pip_install(pkg: str) -> None:
@@ -34,7 +39,7 @@ def pip_install(pkg: str) -> None:
 def ensure_pyinstaller(upgrade: bool = False) -> None:
     """Install or upgrade PyInstaller as needed."""
     if upgrade:
-        pip_install("pyinstaller --upgrade")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pyinstaller"])
     else:
         pip_install("pyinstaller")
 
@@ -43,6 +48,9 @@ def build_exe(onefile: bool) -> None:
     """Invoke PyInstaller with a minimal, reproducible configuration."""
     if not MAIN_SCRIPT.exists():
         raise FileNotFoundError(f"Main script not found: {MAIN_SCRIPT}")
+
+    WORKPATH.mkdir(parents=True, exist_ok=True)
+    DISTPATH.mkdir(parents=True, exist_ok=True)
 
     hidden_imports = [
         "app",
@@ -59,12 +67,15 @@ def build_exe(onefile: bool) -> None:
         "-m",
         "PyInstaller",
         str(MAIN_SCRIPT),
-        "--clean",
         "--noconfirm",
         "--name",
         "building_code_search",
         "--paths",
         str(ROOT / "src"),
+        "--workpath",
+        str(WORKPATH),
+        "--distpath",
+        str(DISTPATH),
         "--collect-all",
         "textual",
         "--collect-all",
@@ -74,10 +85,13 @@ def build_exe(onefile: bool) -> None:
     for mod in hidden_imports:
         cmd.extend(["--hidden-import", mod])
 
-    # Always build as a single-file executable for easy distribution.
-    cmd.append("--onefile")
+    if onefile:
+        cmd.append("--onefile")
+    else:
+        cmd.append("--onedir")
 
     subprocess.check_call(cmd, cwd=ROOT)
+    print(f"EXE output: {DISTPATH}")
 
 
 def parse_args() -> argparse.Namespace:
