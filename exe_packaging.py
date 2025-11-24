@@ -74,10 +74,8 @@ def build_exe(onefile: bool) -> None:
     for mod in hidden_imports:
         cmd.extend(["--hidden-import", mod])
 
-    if onefile:
-        cmd.append("--onefile")
-    else:
-        cmd.append("--onedir")  # keeps DLLs extracted; faster startup
+    # Always build as a single-file executable for easy distribution.
+    cmd.append("--onefile")
 
     subprocess.check_call(cmd, cwd=ROOT)
 

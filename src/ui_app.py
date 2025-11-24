@@ -8,7 +8,7 @@ from datetime import date
 import pyperclip
 from rich.text import Text
 from textual.app import App, ComposeResult
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import (
     Button,
     Footer,
@@ -65,6 +65,7 @@ class Building_Code_Search(App):
     #article_scroll { height: 1fr; margin: 1; border: solid #444; }
     #article_body { width: 100%; padding: 1; }
     #all_results_copy { margin: 1; }
+    #single_results_copy { margin: 1; }
 
     #result_list > ListItem {
         background: transparent;
@@ -95,7 +96,9 @@ class Building_Code_Search(App):
             yield ListView(id="result_list")
             self.article_body = Static("ここに本文が表示されます", id="article_body")
             yield VerticalScroll(self.article_body, id="article_scroll")
-            yield Button("All_results_Copy", id="all_results_copy")
+            with Horizontal():
+                yield Button("All_results_Copy", id="all_results_copy")
+                yield Button("Single_results_Copy", id="single_results_copy")
         yield Footer()
 
     def notify_safe(self, message: str, severity: str = "information"):
@@ -328,6 +331,8 @@ class Building_Code_Search(App):
     def on_button_pressed(self, event: Button.Pressed):
         if event.button.id == "all_results_copy":
             self.action_all_results_copy()
+        elif event.button.id == "single_results_copy":
+            self.action_single_results_copy()
 
     def on_list_view_selected(self, event: ListView.Selected):
         if not event.item or event.item.id not in self.index_map:
@@ -406,6 +411,49 @@ class Building_Code_Search(App):
             self.notify_safe("📋 All results copied to clipboard", severity="information")
         except Exception as e:
             self.notify_safe(f"全件コピーに失敗しました: {e}", severity="error")
+
+    def action_single_results_copy(self):
+        """
+        選択中の1条文だけを JSON形式でクリップボードにコピーする。
+        全件コピーではなく、現在 result_list で選択されている entry のみを対象とする。
+        """
+        try:
+            selected = self.result_list.index
+            if selected is None:
+                self.notify_safe("コピーする条文が選択されていません", severity="warning")
+                return
+
+            item = self.result_list.children[selected]
+            if not hasattr(item, "id") or item.id not in self.index_map:
+                self.notify_safe("条文が選択されていません", severity="warning")
+                return
+
+            entry = self.index_map[item.id]
+
+            raw_entry = {
+                "law_type": entry.get("law_type"),
+                "chapter_title": entry.get("chapter_title"),
+                "section_title": entry.get("section_title"),
+                "article_title": entry.get("title"),
+                "article_caption": entry.get("caption"),
+                "full_text": entry.get("full_text")
+                or render_article_plain(
+                    entry.get("title", ""), entry.get("structure") or {}
+                ),
+            }
+
+            cleaned = prune_empty(copy.deepcopy(raw_entry))
+
+            import json
+            import pyperclip
+
+            json_text = json.dumps(cleaned, ensure_ascii=False, indent=2)
+            pyperclip.copy(json_text)
+
+            self.notify_safe("📋 Selected result copied (JSON)", severity="information")
+
+        except Exception as e:
+            self.notify_safe(f"コピー失敗: {e}", severity="error")
 
     def action_copy_article(self):
         """表示中の本文をクリップボードへコピー。"""
