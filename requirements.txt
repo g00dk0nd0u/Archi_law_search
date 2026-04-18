@@ -1,5 +1,2 @@
-# Core runtime dependencies
-requests==2.32.5
-textual==6.6.0
-pyperclip==1.11.0
-beautifulsoup4==4.12.3
+# No external dependencies.
+# This project is designed to run on Python standard library only.

@@ -40,7 +40,6 @@ try:
         render_structure,
     )
     from .text_utils import clean_text_display, get_text
-    from .ui_app import Building_Code_Search, highlight_text, make_safe_id
 except ImportError:
     # Script direct (python src/app.py)
     from laws_api import BASE_URL, LAW_MAIN_ID, LAW_ORDER_ID, fetch_law_xml, safe_fetch
@@ -82,7 +81,6 @@ except ImportError:
         render_structure,
     )
     from text_utils import clean_text_display, get_text
-    from ui_app import Building_Code_Search, highlight_text, make_safe_id
 
 __all__ = [
     "BASE_URL",
@@ -123,11 +121,8 @@ __all__ = [
     "render_structure",
     "clean_text_display",
     "get_text",
-    "Building_Code_Search",
-    "highlight_text",
-    "make_safe_id",
 ]
 
 
 if __name__ == "__main__":
-    Building_Code_Search().run()
+    raise RuntimeError("Use `python -m src.web_app` for Web UI.")
