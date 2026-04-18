@@ -45,9 +45,12 @@ class LawSearchHandler(BaseHTTPRequestHandler):
 
         query = parse_qs(parsed.query).get("q", [""])[0].strip()
         rows = []
+        warning = ""
         if query:
-            rows = self.search(query)
+            rows, warning = self.search(query)
             meta = f"{len(rows)}件ヒット"
+            if warning:
+                meta = f"{meta}（{warning}）"
         else:
             meta = "キーワードを入力してください"
 
@@ -77,18 +80,32 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             LIMIT 100
         """
         with sqlite3.connect(self.db_path) as conn:
-            return conn.execute(sql, (query,)).fetchall()
+            try:
+                return conn.execute(sql, (query,)).fetchall(), ""
+            except sqlite3.OperationalError:
+                # FTS5の構文エラー回避（例: 記号が多いクエリ）
+                quoted = f'"{query}"'
+                return conn.execute(sql, (quoted,)).fetchall(), "クエリをフレーズ検索に変換"
+
+    @staticmethod
+    def _safe_snippet(snippet_text: str) -> str:
+        placeholder_open = "__MARK_OPEN__"
+        placeholder_close = "__MARK_CLOSE__"
+        safe = (snippet_text or "").replace("<mark>", placeholder_open).replace("</mark>", placeholder_close)
+        safe = html.escape(safe)
+        return safe.replace(placeholder_open, "<mark>").replace(placeholder_close, "</mark>")
 
     def render_table(self, rows):
         if not rows:
             return ""
         lines = ["<table>", "<thead><tr><th>法令</th><th>条</th><th>本文</th></tr></thead>", "<tbody>"]
         for law_name, article_no, body in rows:
+            safe_body = self._safe_snippet(body)
             lines.append(
                 "<tr>"
                 f"<td class='law'>{html.escape(law_name)}</td>"
                 f"<td class='article'>{html.escape(article_no)}</td>"
-                f"<td class='body'>{body}</td>"
+                f"<td class='body'>{safe_body}</td>"
                 "</tr>"
             )
         lines.append("</tbody></table>")
