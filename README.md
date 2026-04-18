@@ -29,9 +29,9 @@ python -m src.web_app --db data/laws.db --host 127.0.0.1 --port 8765
 
 `articles` への INSERT/UPDATE/DELETE はトリガーで `articles_fts` に自動反映されます。
 
-## 既存TUIについて
-`src/ui_app.py` の Textual ベース TUI は残していますが、外部ライブラリが必要です。  
-TUI依存がない環境では `python -m src.app` は起動せず、`python -m src.web_app` を利用してください。
+## UIについて
+このリポジトリは `src.web_app` によるローカルWeb UIを利用します。  
+検索前に `python -m src.prepare_sqlite --db data/laws.db` を実行し、その後 `python -m src.web_app --db data/laws.db --host 127.0.0.1 --port 8765` で起動してください。
 
 ## テスト・ユーティリティ
 - 本文生成の欠損検査: `python -m tests.check_missing_content`
