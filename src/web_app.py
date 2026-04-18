@@ -1,10 +1,16 @@
 import argparse
 import html
 from pathlib import Path
+import re
 import sqlite3
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
+
+if __package__ in (None, ""):
+    from number_text_utils import int_to_kanji, normalize_separators
+else:
+    from .number_text_utils import int_to_kanji, normalize_separators
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "laws.db"
 
@@ -73,7 +79,25 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         return
 
     def search(self, query: str):
-        sql = """
+        db_path = Path(self.db_path)
+        if not db_path.exists():
+            return [], "DBファイルが見つかりません"
+
+        db_uri = f"{db_path.resolve().as_uri()}?mode=rw"
+        try:
+            conn = sqlite3.connect(db_uri, uri=True)
+        except sqlite3.OperationalError:
+            return [], "DBファイルを開けません"
+
+        like_sql = """
+            SELECT l.law_name, a.article_no, a.body
+            FROM articles a
+            JOIN laws l ON l.law_id = a.law_id
+            WHERE {where_clause}
+            ORDER BY a.article_sort_base, a.article_sort_branch
+            LIMIT 100
+        """
+        fts_sql = """
             SELECT l.law_name, a.article_no, snippet(articles_fts, 1, '<mark>', '</mark>', ' … ', 16)
             FROM articles_fts
             JOIN articles a ON a.id = articles_fts.rowid
@@ -82,13 +106,30 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             ORDER BY a.article_sort_base, a.article_sort_branch
             LIMIT 100
         """
-        with sqlite3.connect(self.db_path) as conn:
+
+        with conn:
+            article_variants, is_article_number_query = self._article_query_variants(query)
+            article_operator = "=" if is_article_number_query else "LIKE"
+            where_parts = [f"a.article_no {article_operator} ?" for _ in article_variants]
+            params = [variant if is_article_number_query else f"%{variant}%" for variant in article_variants]
+            where_parts.extend(["a.body LIKE ?", "l.law_name LIKE ?"])
+            params.extend([f"%{query}%", f"%{query}%"])
+            like_rows = conn.execute(
+                like_sql.format(where_clause="\n               OR ".join(where_parts)),
+                params,
+            ).fetchall()
+            if like_rows:
+                return [
+                    (law_name, article_no, self._build_like_snippet(body, query))
+                    for law_name, article_no, body in like_rows
+                ], ""
+
             try:
-                return conn.execute(sql, (query,)).fetchall(), ""
+                return conn.execute(fts_sql, (query,)).fetchall(), ""
             except sqlite3.OperationalError:
                 # FTS5の構文エラー回避（例: 記号が多いクエリ）
                 quoted = f'"{query}"'
-                return conn.execute(sql, (quoted,)).fetchall(), "クエリをフレーズ検索に変換"
+                return conn.execute(fts_sql, (quoted,)).fetchall(), "クエリをフレーズ検索に変換"
 
     @staticmethod
     def _safe_snippet(snippet_text: str) -> str:
@@ -97,6 +138,54 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         safe = (snippet_text or "").replace("<mark>", placeholder_open).replace("</mark>", placeholder_close)
         safe = html.escape(safe)
         return safe.replace(placeholder_open, "<mark>").replace(placeholder_close, "</mark>")
+
+    @staticmethod
+    def _build_like_snippet(body_text: str, query: str, radius: int = 80) -> str:
+        body_text = body_text or ""
+        idx = body_text.find(query)
+        if idx < 0:
+            return body_text[: radius * 2]
+
+        start = max(0, idx - radius)
+        end = min(len(body_text), idx + len(query) + radius)
+        snippet = body_text[start:end]
+        if start > 0:
+            snippet = f"… {snippet}"
+        if end < len(body_text):
+            snippet = f"{snippet} …"
+        return snippet.replace(query, f"<mark>{query}</mark>", 1)
+
+    @staticmethod
+    def _article_query_variants(query: str) -> tuple[list[str], bool]:
+        variants: list[str] = []
+        seen: set[str] = set()
+
+        def add(value: str):
+            value = value.strip()
+            if value and value not in seen:
+                seen.add(value)
+                variants.append(value)
+
+        add(query)
+        normalized = normalize_separators(query.strip())
+        add(normalized)
+
+        match = re.fullmatch(r"(?:第)?(\d+)(?:条)?(?:[-の](\d+))?", normalized)
+        if not match:
+            return variants, False
+
+        main_num = int(match.group(1))
+        branch_num = match.group(2)
+        if branch_num is None:
+            add(f"第{main_num}条")
+            add(f"第{int_to_kanji(main_num)}条")
+        else:
+            branch_int = int(branch_num)
+            add(f"第{main_num}条の{branch_int}")
+            add(f"第{int_to_kanji(main_num)}条の{branch_int}")
+            add(f"第{int_to_kanji(main_num)}条の{int_to_kanji(branch_int)}")
+
+        return variants, True
 
     def render_table(self, rows):
         if not rows:
