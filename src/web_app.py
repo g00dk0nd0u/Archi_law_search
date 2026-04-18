@@ -1,9 +1,12 @@
 import argparse
 import html
+from pathlib import Path
 import sqlite3
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
+
+DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "laws.db"
 
 PAGE_TEMPLATE = """<!doctype html>
 <html lang=\"ja\">
@@ -11,14 +14,14 @@ PAGE_TEMPLATE = """<!doctype html>
   <meta charset=\"utf-8\" />
   <title>建築法規検索</title>
   <style>
-    body { font-family: sans-serif; margin: 1.5rem auto; max-width: 1080px; padding: 0 1rem; }
-    input[type=text] { width: 26rem; max-width: 80vw; }
-    table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
-    th, td { border: 1px solid #ddd; padding: 0.5rem; vertical-align: top; }
-    th { background: #f5f5f5; text-align: left; }
-    .law { white-space: nowrap; }
-    .article { white-space: nowrap; }
-    .body { white-space: pre-wrap; }
+    body {{ font-family: sans-serif; margin: 1.5rem auto; max-width: 1080px; padding: 0 1rem; }}
+    input[type=text] {{ width: 26rem; max-width: 80vw; }}
+    table {{ border-collapse: collapse; width: 100%; margin-top: 1rem; }}
+    th, td {{ border: 1px solid #ddd; padding: 0.5rem; vertical-align: top; }}
+    th {{ background: #f5f5f5; text-align: left; }}
+    .law {{ white-space: nowrap; }}
+    .article {{ white-space: nowrap; }}
+    .body {{ white-space: pre-wrap; }}
   </style>
 </head>
 <body>
@@ -35,7 +38,7 @@ PAGE_TEMPLATE = """<!doctype html>
 
 
 class LawSearchHandler(BaseHTTPRequestHandler):
-    db_path = "data/laws.db"
+    db_path = str(DEFAULT_DB_PATH)
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -114,7 +117,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="SQLite法規データを検索するWeb UI")
-    parser.add_argument("--db", default="data/laws.db", help="SQLite DB パス")
+    parser.add_argument("--db", default=str(DEFAULT_DB_PATH), help="SQLite DB パス")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", default=8765, type=int)
     return parser.parse_args()
