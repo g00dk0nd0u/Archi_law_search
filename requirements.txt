@@ -1,2 +1,6 @@
-# No external dependencies.
-# This project is designed to run on Python standard library only.
+# This project can run in standard-library mode (no external dependencies required)
+# Optional legacy TUI dependencies:
+# textual==6.6.0
+# pyperclip==1.11.0
+# beautifulsoup4==4.12.3
+# requests==2.32.5

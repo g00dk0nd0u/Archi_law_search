@@ -2,7 +2,7 @@
 
 建築基準法（`325AC0000000201`）と建築基準法施行令（`325CO0000000338`）を e-Gov 法令 API から取得し、事前に SQLite へ格納して検索するアプリです。
 
-このリポジトリでは **Python標準ライブラリのみ** の運用を想定しています。  
+このリポジトリでは **Python標準ライブラリ中心** の運用を想定しています。  
 - 事前準備: `src.prepare_sqlite`（API取得 → SQLite格納）
 - 利用時UI: `src.web_app`（ローカルWeb UI）
 
@@ -29,7 +29,10 @@ python -m src.web_app --db data/laws.db --host 127.0.0.1 --port 8765
 
 `articles` への INSERT/UPDATE/DELETE はトリガーで `articles_fts` に自動反映されます。
 
+## 既存TUIについて
+`src/ui_app.py` の Textual ベース TUI は残していますが、外部ライブラリが必要です。  
+TUI依存がない環境では `python -m src.app` は起動せず、`python -m src.web_app` を利用してください。
+
 ## テスト・ユーティリティ
-- 単体テスト: `python -m unittest tests.test_web_and_db`
 - 本文生成の欠損検査: `python -m tests.check_missing_content`
 - 条番号範囲を指定: `python -m tests.check_missing_content 111 120`

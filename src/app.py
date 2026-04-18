@@ -40,6 +40,12 @@ try:
         render_structure,
     )
     from .text_utils import clean_text_display, get_text
+    try:
+        from .ui_app import Building_Code_Search, highlight_text, make_safe_id
+    except Exception:  # Optional dependency (textual/pyperclip) may be unavailable.
+        Building_Code_Search = None
+        highlight_text = None
+        make_safe_id = None
 except ImportError:
     # Script direct (python src/app.py)
     from laws_api import BASE_URL, LAW_MAIN_ID, LAW_ORDER_ID, fetch_law_xml, safe_fetch
@@ -81,6 +87,12 @@ except ImportError:
         render_structure,
     )
     from text_utils import clean_text_display, get_text
+    try:
+        from ui_app import Building_Code_Search, highlight_text, make_safe_id
+    except Exception:  # Optional dependency (textual/pyperclip) may be unavailable.
+        Building_Code_Search = None
+        highlight_text = None
+        make_safe_id = None
 
 __all__ = [
     "BASE_URL",
@@ -123,6 +135,13 @@ __all__ = [
     "get_text",
 ]
 
+if Building_Code_Search is not None:
+    __all__.extend(["Building_Code_Search", "highlight_text", "make_safe_id"])
+
 
 if __name__ == "__main__":
-    raise RuntimeError("Use `python -m src.web_app` for Web UI.")
+    if Building_Code_Search is None:
+        raise RuntimeError(
+            "TUI dependencies are unavailable. Use `python -m src.web_app` for Web UI."
+        )
+    Building_Code_Search().run()
