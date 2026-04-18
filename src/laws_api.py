@@ -1,25 +1,29 @@
 import traceback
+import urllib.parse
+import urllib.request
 import xml.etree.ElementTree as ET
 
-import requests
-
-LAW_MAIN_ID = "325AC0000000201"   # 蟒ｺ遽牙渕貅匁ｳ・
-LAW_ORDER_ID = "325CO0000000338"  # 蟒ｺ遽牙渕貅匁ｳ墓命陦御ｻ､
+LAW_MAIN_ID = "325AC0000000201"   # 建築基準法
+LAW_ORDER_ID = "325CO0000000338"  # 建築基準法施行令
 BASE_URL = "https://laws.e-gov.go.jp/api/2/law_data/"
 
 
-# ==== XML蜿門ｾ・====
 def fetch_law_xml(law_id: str, as_of_date=None):
+    """e-Gov法令APIから法令XMLを取得してElementTreeへ変換する。"""
     params = {"response_format": "xml"}
     if as_of_date:
         params["asof"] = as_of_date
-    r = requests.get(BASE_URL + law_id, params=params, timeout=15)
-    r.raise_for_status()
-    return ET.fromstring(r.text)
+
+    query = urllib.parse.urlencode(params)
+    url = f"{BASE_URL}{law_id}?{query}"
+    request = urllib.request.Request(url, headers={"User-Agent": "ArchiLawSearch/1.0"})
+    with urllib.request.urlopen(request, timeout=15) as response:
+        body = response.read()
+    return ET.fromstring(body)
 
 
 def safe_fetch(law_id: str, as_of_date=None):
-    """fetch_law_xml 繧偵Λ繝・・縺励※萓句､悶ｒ蜷ｸ蜿弱ょ､ｱ謨玲凾縺ｯ遨ｺ縺ｮ繝ｫ繝ｼ繝医ｒ霑斐☆縲・"""
+    """fetch_law_xmlをラップして失敗時は空ルートを返す。"""
     try:
         return fetch_law_xml(law_id, as_of_date)
     except Exception as e:
