@@ -1,7 +1,10 @@
 import traceback
+import ssl
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+
+import certifi
 
 LAW_MAIN_ID = "325AC0000000201"   # 建築基準法
 LAW_ORDER_ID = "325CO0000000338"  # 建築基準法施行令
@@ -17,7 +20,8 @@ def fetch_law_xml(law_id: str, as_of_date=None):
     query = urllib.parse.urlencode(params)
     url = f"{BASE_URL}{law_id}?{query}"
     request = urllib.request.Request(url, headers={"User-Agent": "ArchiLawSearch/1.0"})
-    with urllib.request.urlopen(request, timeout=15) as response:
+    ssl_context = ssl.create_default_context(cafile=certifi.where())
+    with urllib.request.urlopen(request, timeout=15, context=ssl_context) as response:
         body = response.read()
     return ET.fromstring(body)
 

@@ -82,6 +82,22 @@ class DatabaseAndWebTests(unittest.TestCase):
             self.assertGreaterEqual(len(rows), 1)
             self.assertEqual(warning, "")
 
+            rows_number, warning_number = LawSearchHandler.search(handler, "1")
+            self.assertGreaterEqual(len(rows_number), 1)
+            self.assertEqual(rows_number[0][1], "第1条")
+            self.assertEqual(warning_number, "")
+
+            rows_branch, warning_branch = LawSearchHandler.search(handler, "2-2")
+            self.assertGreaterEqual(len(rows_branch), 1)
+            self.assertEqual(rows_branch[0][1], "第2条の2")
+            self.assertEqual(warning_branch, "")
+
+            # 日本語の部分一致でもヒットする
+            rows_partial, warning_partial = LawSearchHandler.search(handler, "耐火")
+            self.assertGreaterEqual(len(rows_partial), 1)
+            self.assertEqual(warning_partial, "")
+            self.assertIn("<mark>耐火</mark>", rows_partial[0][2])
+
             # 記号クエリで構文エラーが出てもフレーズ検索にフォールバック
             rows2, warning2 = LawSearchHandler.search(handler, "(")
             self.assertIsInstance(rows2, list)
@@ -92,6 +108,19 @@ class DatabaseAndWebTests(unittest.TestCase):
             safe = LawSearchHandler._safe_snippet(unsafe)
             self.assertIn("&lt;script&gt;", safe)
             self.assertIn("<mark>耐火</mark>", safe)
+
+    def test_web_search_missing_db_returns_warning_without_creating_file(self):
+        tmpdir = pathlib.Path(tempfile.mkdtemp())
+        db_path = tmpdir / "missing.db"
+
+        handler = object.__new__(LawSearchHandler)
+        handler.db_path = str(db_path)
+
+        rows, warning = LawSearchHandler.search(handler, "第1条")
+
+        self.assertEqual(rows, [])
+        self.assertEqual(warning, "DBファイルが見つかりません")
+        self.assertFalse(db_path.exists())
 
 
 if __name__ == "__main__":

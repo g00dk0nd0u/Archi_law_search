@@ -1,8 +1,15 @@
 import argparse
 from pathlib import Path
 
-from .law_database import LawSource, connect_db, init_db, upsert_law
-from .laws_api import LAW_MAIN_ID, LAW_ORDER_ID, safe_fetch
+if __package__ in (None, ""):
+    import sys
+
+    sys.path.append(str(Path(__file__).resolve().parent.parent))
+    from src.law_database import LawSource, connect_db, init_db, upsert_law
+    from src.laws_api import LAW_MAIN_ID, LAW_ORDER_ID, safe_fetch
+else:
+    from .law_database import LawSource, connect_db, init_db, upsert_law
+    from .laws_api import LAW_MAIN_ID, LAW_ORDER_ID, safe_fetch
 
 
 def parse_args() -> argparse.Namespace:
