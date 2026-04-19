@@ -143,6 +143,7 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       justify-content: flex-end;
       gap: 0.5rem;
       flex-shrink: 0;
+      position: relative;
     }}
     .bulk-copy-button {{
       padding: 0.32rem 0.72rem;
@@ -160,6 +161,21 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       outline: none;
     }}
     .bulk-copy-button[hidden] {{ display: none; }}
+    .copy-feedback {{
+      position: absolute;
+      top: 50%;
+      right: calc(100% + 0.35rem);
+      transform: translateY(-50%);
+      font-size: 0.74rem;
+      color: #5a6d83;
+      background: rgba(255, 255, 255, 0.92);
+      border: 1px solid #d6dee8;
+      border-radius: 999px;
+      padding: 0.14rem 0.46rem;
+      line-height: 1.2;
+      white-space: nowrap;
+    }}
+    .copy-feedback[hidden] {{ display: none; }}
     table {{
       border-collapse: collapse;
       width: 100%;
@@ -194,6 +210,11 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       position: relative;
       min-height: 1.6rem;
       padding-right: 2.1rem;
+    }}
+    .body-copy-feedback {{
+      position: absolute;
+      top: 0.18rem;
+      right: 2.35rem;
     }}
     .body.is-expandable {{
       cursor: pointer;
@@ -251,7 +272,7 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       font-size: 0.875rem;
     }}
     mark {{
-      background: #fff0b3;
+      background: #ffdca8;
       color: inherit;
       border-radius: 2px;
       padding: 0 2px;
@@ -414,16 +435,35 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
           return;
         }}
         const originalTitle = button.getAttribute("title") || "コピー";
+        const feedback = button.parentElement ? button.parentElement.querySelector(".copy-feedback") : null;
+        if (button._copyFeedbackTimerId) {{
+          window.clearTimeout(button._copyFeedbackTimerId);
+          button._copyFeedbackTimerId = null;
+        }}
         try {{
           await copyText(text);
           button.setAttribute("title", "Copied");
+          if (feedback) {{
+            feedback.textContent = "コピー済み";
+            feedback.hidden = false;
+          }}
           window.setTimeout(function () {{
             button.setAttribute("title", originalTitle);
           }}, 1200);
         }} catch (_error) {{
           button.setAttribute("title", "コピー失敗");
+          if (feedback) {{
+            feedback.textContent = "失敗";
+            feedback.hidden = false;
+          }}
           window.setTimeout(function () {{
             button.setAttribute("title", originalTitle);
+          }}, 1200);
+        }}
+        if (feedback) {{
+          button._copyFeedbackTimerId = window.setTimeout(function () {{
+            feedback.hidden = true;
+            button._copyFeedbackTimerId = null;
           }}, 1200);
         }}
       }};
@@ -656,7 +696,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             article_query=html.escape(article_query),
             body_query=html.escape(body_query),
             meta=html.escape(meta),
-            meta_actions=self._render_meta_actions(rows),
+            meta_actions=self._render_meta_actions(rows, article_query, body_query),
             table=self.render_table(rows),
         ).encode("utf-8")
         self._send_html(body)
@@ -916,9 +956,16 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         return "\n".join([law_name, article_no, cls._plain_text_for_copy(full_body)])
 
     @classmethod
-    def _build_bulk_copy_text(cls, rows) -> str:
+    def _build_bulk_copy_text(cls, rows, article_query: str = "", body_query: str = "") -> str:
+        condition_lines = [
+            "検索条件",
+            f"条番号: {article_query or 'なし'}",
+            f"本文キーワード: {body_query or 'なし'}",
+        ]
         blocks = [cls._build_copy_text(law_name, article_no, full_body) for law_name, article_no, _body, full_body in rows]
-        return "\n\n".join(blocks)
+        if not blocks:
+            return "\n".join(condition_lines)
+        return "\n".join(condition_lines) + "\n\n" + "\n\n".join(blocks)
 
     @staticmethod
     def _extract_leading_heading(body_text: str, max_scan_length: int = 240, max_heading_length: int = 80) -> str:
@@ -981,13 +1028,14 @@ class LawSearchHandler(BaseHTTPRequestHandler):
     def _display_law_name(cls, law_name: str, provision_kind: str) -> str:
         return cls.LAW_DISPLAY_LABELS.get((law_name, provision_kind), law_name)
 
-    def _render_meta_actions(self, rows) -> str:
+    def _render_meta_actions(self, rows, article_query: str = "", body_query: str = "") -> str:
         if not rows:
             return ""
-        copy_text = html.escape(self._build_bulk_copy_text(rows), quote=True)
+        copy_text = html.escape(self._build_bulk_copy_text(rows, article_query, body_query), quote=True)
         return (
-            f"<button type='button' class='bulk-copy-button' title='検索結果をコピー' "
-            f"data-copy-text='{copy_text}'>結果をコピー</button>"
+            f"<span class='copy-feedback' hidden>コピー済み</span>"
+            f"<button type='button' class='bulk-copy-button' title='全結果をコピー' "
+            f"data-copy-text='{copy_text}'>全結果をコピー</button>"
         )
 
     @classmethod
@@ -1063,6 +1111,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             copy_hidden_attr = " hidden" if is_expandable else ""
             body_html = (
                 "<div class='body-wrap'>"
+                f"<span class='copy-feedback body-copy-feedback' hidden>コピー済み</span>"
                 f"<button type='button' class='copy-button' title='コピー' data-copy-text='{copy_text}'{copy_hidden_attr}></button>"
                 f"<div class='body-preview'>{safe_body}</div>"
             )

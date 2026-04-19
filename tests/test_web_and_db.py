@@ -521,7 +521,7 @@ class DatabaseAndWebTests(unittest.TestCase):
             article_query="第1条",
             body_query="耐火",
             meta="1件ヒット",
-            meta_actions="<button>copy</button>",
+            meta_actions="<button class='bulk-copy-button'>全結果をコピー</button>",
             table="<div>ok</div>",
         )
         self.assertIn('document.addEventListener("DOMContentLoaded"', html_doc)
@@ -535,7 +535,11 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn('navigator.clipboard.writeText', html_doc)
         self.assertIn('document.querySelectorAll(".copy-button")', html_doc)
         self.assertIn('document.querySelector(".bulk-copy-button")', html_doc)
+        self.assertIn('feedback.textContent = "コピー済み"', html_doc)
+        self.assertIn('feedback.hidden = false', html_doc)
         self.assertIn("meta-actions", html_doc)
+        self.assertIn(">全結果をコピー<", html_doc)
+        self.assertIn("background: #ffdca8;", html_doc)
         self.assertIn(">Settings<", html_doc)
 
     def test_settings_template_supports_notice_and_table_markup(self):
@@ -605,6 +609,7 @@ class DatabaseAndWebTests(unittest.TestCase):
 
         self.assertIn("class='body is-expandable'", table_html)
         self.assertIn("class='copy-button'", table_html)
+        self.assertIn("class='copy-feedback body-copy-feedback'", table_html)
         self.assertIn("data-copy-text='建築基準法\n第1条\n&lt;script&gt;alert(1)&lt;/script&gt;耐火構造の全文'", table_html)
         self.assertIn("hidden", table_html)
         self.assertIn("class='body-preview'", table_html)
@@ -628,12 +633,14 @@ class DatabaseAndWebTests(unittest.TestCase):
             [
                 ("建築基準法", "第1条", "…<mark>耐火</mark>…", "<mark>耐火</mark>構造の全文"),
                 ("消防法", "第三条", "…<mark>放置</mark>…", "放置物件を除去する。"),
-            ]
+            ],
+            article_query="第1条",
+            body_query="耐火",
         )
 
         self.assertEqual(
             text,
-            "建築基準法\n第1条\n耐火構造の全文\n\n消防法\n第三条\n放置物件を除去する。",
+            "検索条件\n条番号: 第1条\n本文キーワード: 耐火\n\n建築基準法\n第1条\n耐火構造の全文\n\n消防法\n第三条\n放置物件を除去する。",
         )
         self.assertNotIn("<mark>", text)
 
@@ -642,12 +649,20 @@ class DatabaseAndWebTests(unittest.TestCase):
         html_with_rows = LawSearchHandler._render_meta_actions(
             handler,
             [("建築基準法", "第1条", "本文", "本文")],
+            article_query="第1条",
+            body_query="耐火",
         )
         html_without_rows = LawSearchHandler._render_meta_actions(handler, [])
 
         self.assertIn("class='bulk-copy-button'", html_with_rows)
-        self.assertIn("検索結果をコピー", html_with_rows)
+        self.assertIn("class='copy-feedback'", html_with_rows)
+        self.assertIn("全結果をコピー", html_with_rows)
+        self.assertIn("検索条件", html_with_rows)
         self.assertEqual(html_without_rows, "")
+
+    def test_build_bulk_copy_text_uses_none_for_missing_conditions(self):
+        text = LawSearchHandler._build_bulk_copy_text([], article_query="", body_query="")
+        self.assertEqual(text, "検索条件\n条番号: なし\n本文キーワード: なし")
 
     def test_handle_search_page_empty_query_returns_initial_empty_state(self):
         handler = object.__new__(LawSearchHandler)
