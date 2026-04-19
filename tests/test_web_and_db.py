@@ -3,8 +3,10 @@ from __future__ import annotations
 import pathlib
 import sqlite3
 import tempfile
+import time
 import unittest
 import xml.etree.ElementTree as ET
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 import sys
@@ -12,7 +14,7 @@ import sys
 sys.path.append(str(ROOT / "src"))
 
 from law_database import LawSource, init_db, upsert_law  # type: ignore
-from web_app import LawSearchHandler  # type: ignore
+from web_app import LawSearchHandler, build_server_url, open_browser  # type: ignore
 
 
 SAMPLE_XML = """
@@ -53,6 +55,30 @@ SAMPLE_XML = """
 
 
 class DatabaseAndWebTests(unittest.TestCase):
+    def test_build_server_url(self):
+        self.assertEqual(build_server_url("127.0.0.1", 8765), "http://127.0.0.1:8765")
+
+    def test_open_browser_calls_webbrowser_open(self):
+        called = []
+
+        def fake_open(url):
+            called.append(url)
+            return True
+
+        with mock.patch("web_app.webbrowser.open", side_effect=fake_open):
+            open_browser("http://127.0.0.1:8765", delay_seconds=0)
+            for _ in range(20):
+                if called:
+                    break
+                time.sleep(0.01)
+
+        self.assertEqual(called, ["http://127.0.0.1:8765"])
+
+    def test_open_browser_swallows_webbrowser_errors(self):
+        with mock.patch("web_app.webbrowser.open", side_effect=RuntimeError("boom")):
+            open_browser("http://127.0.0.1:8765", delay_seconds=0)
+            time.sleep(0.05)
+
     def test_upsert_creates_and_updates_articles(self):
         root = ET.fromstring(SAMPLE_XML)
         source = LawSource("X001", "テスト法")

@@ -3,6 +3,9 @@ import html
 from pathlib import Path
 import re
 import sqlite3
+import threading
+import time
+import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -302,11 +305,29 @@ def parse_args():
     return parser.parse_args()
 
 
+def build_server_url(host: str, port: int) -> str:
+    return f"http://{host}:{port}"
+
+
+def open_browser(url: str, delay_seconds: float = 0.3) -> None:
+    def _open():
+        if delay_seconds > 0:
+            time.sleep(delay_seconds)
+        try:
+            webbrowser.open(url)
+        except Exception as exc:
+            print(f"[WARN] failed to open browser: {exc}")
+
+    threading.Thread(target=_open, daemon=True).start()
+
+
 def main():
     args = parse_args()
     LawSearchHandler.db_path = args.db
     server = ThreadingHTTPServer((args.host, args.port), LawSearchHandler)
-    print(f"[INFO] serving http://{args.host}:{args.port} (db={args.db})")
+    url = build_server_url(args.host, args.port)
+    print(f"[INFO] serving {url} (db={args.db})")
+    open_browser(url)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
