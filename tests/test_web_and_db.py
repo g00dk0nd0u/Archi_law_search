@@ -549,11 +549,18 @@ class DatabaseAndWebTests(unittest.TestCase):
             "建築物の耐震改修の促進に関する法律",
         )
 
-    def test_build_like_snippet_prepends_leading_heading_when_present(self):
+    def test_build_like_snippet_keeps_single_heading_when_match_is_in_heading(self):
         body = "（耐火建築物等としなければならない特殊建築物）劇場、映画館その他の特殊建築物は耐火構造としなければならない。"
         snippet = LawSearchHandler._build_like_snippet(body, "耐火")
-        self.assertTrue(snippet.startswith("（耐火建築物等としなければならない特殊建築物）\n"))
+        self.assertEqual(snippet.count("（"), 1)
+        self.assertTrue(snippet.startswith("（<mark>耐火</mark>建築物等としなければならない特殊建築物）"))
         self.assertIn("<mark>耐火</mark>", snippet)
+
+    def test_build_like_snippet_does_not_duplicate_heading_when_snippet_already_contains_it(self):
+        body = "前文です。" * 20 + "（特殊建築物等の内装）特殊建築物等の内装は制限を受ける。"
+        snippet = LawSearchHandler._build_like_snippet(body, "内装", radius=20)
+        self.assertEqual(snippet.count("（特殊建築物等の"), 1)
+        self.assertIn("<mark>内装</mark>", snippet)
 
     def test_build_like_snippet_keeps_plain_snippet_when_heading_missing(self):
         body = "劇場、映画館その他の特殊建築物は耐火構造としなければならない。"
@@ -608,8 +615,49 @@ class DatabaseAndWebTests(unittest.TestCase):
 
         self.assertEqual(warning, "")
         self.assertEqual(len(rows), 1)
-        self.assertTrue(rows[0][2].startswith("（耐火建築物等としなければならない特殊建築物）\n"))
+        self.assertEqual(rows[0][2].count("（耐火建築物等としなければならない特殊建築物）"), 0)
+        self.assertEqual(rows[0][2].count("（<mark>耐火</mark>建築物等としなければならない特殊建築物）"), 1)
         self.assertIn("<mark>耐火</mark>", rows[0][2])
+
+    def test_search_body_does_not_duplicate_heading_in_like_snippet(self):
+        body = "前文です。" * 20 + "（特殊建築物等の内装）特殊建築物等の内装は制限を受ける。"
+        source = LawSource("X301", "建築基準法")
+        root = ET.fromstring(
+            f"""
+<Root>
+  <LawBody>
+    <MainProvision>
+      <Article>
+        <ArticleTitle>第三十五条の二</ArticleTitle>
+        <Paragraph>
+          <ParagraphNum>1</ParagraphNum>
+          <ParagraphSentence>
+            <Sentence>{body}</Sentence>
+          </ParagraphSentence>
+        </Paragraph>
+      </Article>
+    </MainProvision>
+  </LawBody>
+</Root>
+"""
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as tf:
+            conn = sqlite3.connect(tf.name)
+            init_db(conn)
+            upsert_law(conn, source, root)
+            conn.commit()
+            conn.close()
+
+            handler = object.__new__(LawSearchHandler)
+            handler.db_path = tf.name
+
+            rows, warning = LawSearchHandler.search_body(handler, "内装")
+
+        self.assertEqual(warning, "")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][2].count("（特殊建築物等の"), 1)
+        self.assertIn("<mark>内装</mark>", rows[0][2])
 
     def test_render_settings_table_shows_import_status_and_actions(self):
         handler = object.__new__(LawSearchHandler)

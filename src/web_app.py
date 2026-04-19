@@ -787,11 +787,24 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         return match.group(0)
 
     @classmethod
+    def _normalize_heading_candidate(cls, text: str) -> str:
+        text = (text or "").replace("<mark>", "").replace("</mark>", "")
+        return text.lstrip("… \n\r\t")
+
+    @classmethod
+    def _snippet_already_shows_heading(cls, heading: str, snippet: str) -> bool:
+        normalized_heading = cls._normalize_heading_candidate(heading)
+        normalized_snippet = cls._normalize_heading_candidate(snippet)
+        if not normalized_heading:
+            return False
+        return normalized_heading in normalized_snippet[: max(len(normalized_heading) + 24, 120)]
+
+    @classmethod
     def _prepend_heading_to_snippet(cls, body_text: str, snippet: str) -> str:
         heading = cls._extract_leading_heading(body_text)
         if not heading:
             return snippet
-        if snippet.startswith(heading):
+        if cls._snippet_already_shows_heading(heading, snippet):
             return snippet
         return f"{heading}\n{snippet}"
 
