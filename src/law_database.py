@@ -85,6 +85,7 @@ def init_db(conn: sqlite3.Connection):
         DROP TRIGGER IF EXISTS articles_au;
         DROP TABLE IF EXISTS articles_fts;
         DROP TABLE IF EXISTS articles;
+        DROP TABLE IF EXISTS laws;
 
         CREATE TABLE IF NOT EXISTS laws (
             law_id TEXT PRIMARY KEY,
@@ -133,9 +134,67 @@ def init_db(conn: sqlite3.Connection):
         END;
         """
     )
+    ensure_db(conn, rebuild_fts=True)
+
+
+def ensure_db(conn: sqlite3.Connection, rebuild_fts: bool = True):
+    conn.executescript(
+        """
+        PRAGMA journal_mode=WAL;
+
+        CREATE TABLE IF NOT EXISTS laws (
+            law_id TEXT PRIMARY KEY,
+            law_name TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS articles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            law_id TEXT NOT NULL,
+            article_no TEXT NOT NULL,
+            provision_kind TEXT NOT NULL,
+            provision_context TEXT NOT NULL,
+            amend_law_num TEXT NOT NULL DEFAULT '',
+            body TEXT NOT NULL,
+            article_sort_base INTEGER NOT NULL,
+            article_sort_branch INTEGER NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(law_id, article_no, provision_kind, provision_context),
+            FOREIGN KEY(law_id) REFERENCES laws(law_id)
+        );
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(
+            article_no,
+            body,
+            law_id UNINDEXED,
+            content='articles',
+            content_rowid='id'
+        );
+
+        CREATE TRIGGER IF NOT EXISTS articles_ai AFTER INSERT ON articles BEGIN
+            INSERT INTO articles_fts(rowid, article_no, body, law_id)
+            VALUES (new.id, new.article_no, new.body, new.law_id);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS articles_ad AFTER DELETE ON articles BEGIN
+            INSERT INTO articles_fts(articles_fts, rowid, article_no, body, law_id)
+            VALUES('delete', old.id, old.article_no, old.body, old.law_id);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS articles_au AFTER UPDATE ON articles BEGIN
+            INSERT INTO articles_fts(articles_fts, rowid, article_no, body, law_id)
+            VALUES('delete', old.id, old.article_no, old.body, old.law_id);
+            INSERT INTO articles_fts(rowid, article_no, body, law_id)
+            VALUES (new.id, new.article_no, new.body, new.law_id);
+        END;
+        """
+    )
+    if rebuild_fts:
+        conn.execute("INSERT INTO articles_fts(articles_fts) VALUES ('rebuild')")
 
 
 def upsert_law(conn: sqlite3.Connection, source: LawSource, root: ET.Element) -> int:
+    ensure_db(conn, rebuild_fts=False)
     now = datetime.now(timezone.utc).isoformat()
     conn.execute(
         """
@@ -180,6 +239,66 @@ def upsert_law(conn: sqlite3.Connection, source: LawSource, root: ET.Element) ->
         inserted += 1
 
     return inserted
+
+
+def law_exists(conn: sqlite3.Connection, law_id: str) -> bool:
+    ensure_db(conn, rebuild_fts=False)
+    row = conn.execute("SELECT 1 FROM laws WHERE law_id = ? LIMIT 1", (law_id,)).fetchone()
+    return row is not None
+
+
+def list_installed_law_ids(conn: sqlite3.Connection) -> set[str]:
+    ensure_db(conn, rebuild_fts=False)
+    return {row[0] for row in conn.execute("SELECT law_id FROM laws").fetchall()}
+
+
+def delete_law(conn: sqlite3.Connection, law_id: str) -> None:
+    ensure_db(conn, rebuild_fts=False)
+    conn.execute("DELETE FROM articles WHERE law_id = ?", (law_id,))
+    conn.execute("DELETE FROM laws WHERE law_id = ?", (law_id,))
+
+
+def replace_law(conn: sqlite3.Connection, source: LawSource, root: ET.Element) -> int:
+    articles = list(iter_articles(root))
+    if not articles:
+        raise ValueError(f"法令データを取得できませんでした: {source.law_name} ({source.law_id})")
+
+    ensure_db(conn, rebuild_fts=False)
+    delete_law(conn, source.law_id)
+
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        """
+        INSERT INTO laws(law_id, law_name, updated_at)
+        VALUES (?, ?, ?)
+        """,
+        (source.law_id, source.law_name, now),
+    )
+
+    for article in articles:
+        base, branch = _article_sort_key(article.article_no)
+        conn.execute(
+            """
+            INSERT INTO articles(
+                law_id, article_no, provision_kind, provision_context, amend_law_num,
+                body, article_sort_base, article_sort_branch, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                source.law_id,
+                article.article_no,
+                article.provision_kind,
+                article.provision_context,
+                article.amend_law_num,
+                article.body,
+                base,
+                branch,
+                now,
+            ),
+        )
+
+    return len(articles)
 
 
 def connect_db(db_path: str | Path) -> sqlite3.Connection:

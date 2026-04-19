@@ -15,9 +15,20 @@ import sys
 
 sys.path.append(str(ROOT / "src"))
 
-from law_database import LawSource, _article_sort_key, init_db, iter_articles, upsert_law  # type: ignore
+from law_database import (  # type: ignore
+    LawSource,
+    _article_sort_key,
+    delete_law,
+    ensure_db,
+    init_db,
+    iter_articles,
+    list_installed_law_ids,
+    replace_law,
+    upsert_law,
+)
+from law_registry import DEFAULT_LAWS, LAW_REGISTRY  # type: ignore
 import laws_api  # type: ignore
-from web_app import PAGE_TEMPLATE, LawSearchHandler, build_server_url, open_browser  # type: ignore
+from web_app import SEARCH_PAGE_TEMPLATE, SETTINGS_PAGE_TEMPLATE, LawSearchHandler, build_server_url, open_browser  # type: ignore
 
 
 SAMPLE_MAIN_XML = """
@@ -88,6 +99,25 @@ SAMPLE_ORDER_XML = """
           <ParagraphNum>1</ParagraphNum>
           <ParagraphSentence>
             <Sentence>建築基準法施行令の第六条本文。</Sentence>
+          </ParagraphSentence>
+        </Paragraph>
+      </Article>
+    </MainProvision>
+  </LawBody>
+</Root>
+"""
+
+
+SAMPLE_UPDATED_XML = """
+<Root>
+  <LawBody>
+    <MainProvision>
+      <Article>
+        <ArticleTitle>第1条</ArticleTitle>
+        <Paragraph>
+          <ParagraphNum>1</ParagraphNum>
+          <ParagraphSentence>
+            <Sentence>更新後の本文。</Sentence>
           </ParagraphSentence>
         </Paragraph>
       </Article>
@@ -405,6 +435,45 @@ class DatabaseAndWebTests(unittest.TestCase):
             ],
         )
 
+    def test_default_registry_contains_only_three_initial_import_targets(self):
+        self.assertEqual([law.law_name for law in DEFAULT_LAWS], ["建築基準法", "建築基準法施行令", "建築士法"])
+        self.assertEqual(len(DEFAULT_LAWS), 3)
+
+    def test_replace_and_delete_law_keep_registry_state_and_search_target_consistent(self):
+        root = ET.fromstring(SAMPLE_MAIN_XML)
+        source = LawSource("X100", "追加法令")
+
+        conn = sqlite3.connect(":memory:")
+        ensure_db(conn)
+
+        count = replace_law(conn, source, root)
+        self.assertEqual(count, 5)
+        self.assertEqual(list_installed_law_ids(conn), {"X100"})
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0], 5)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM articles_fts").fetchone()[0], 5)
+
+        delete_law(conn, "X100")
+        self.assertEqual(list_installed_law_ids(conn), set())
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0], 0)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM articles_fts").fetchone()[0], 0)
+
+    def test_replace_law_refresh_removes_stale_articles(self):
+        source = LawSource("X200", "更新法令")
+        conn = sqlite3.connect(":memory:")
+        ensure_db(conn)
+
+        replace_law(conn, source, ET.fromstring(SAMPLE_MAIN_XML))
+        replace_law(conn, source, ET.fromstring(SAMPLE_UPDATED_XML))
+
+        rows = conn.execute(
+            "SELECT article_no, body FROM articles WHERE law_id = ? ORDER BY article_no",
+            ("X200",),
+        ).fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0], "第1条")
+        self.assertIn("更新後の本文。", rows[0][1])
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM articles_fts").fetchone()[0], 1)
+
     def test_parse_search_inputs_prioritizes_article_and_legacy_q_as_body(self):
         article_q, body_q = LawSearchHandler._parse_search_inputs("q=%E8%80%90%E7%81%AB")
         self.assertEqual(article_q, "")
@@ -429,7 +498,7 @@ class DatabaseAndWebTests(unittest.TestCase):
         )
 
     def test_page_template_supports_realtime_search_script(self):
-        html_doc = PAGE_TEMPLATE.format(
+        html_doc = SEARCH_PAGE_TEMPLATE.format(
             article_query="第1条",
             body_query="耐火",
             meta="1件ヒット",
@@ -441,6 +510,14 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn("bodyValue.length < 2", html_doc)
         self.assertIn("AUTO_SUBMIT_DELAY_MS = 700", html_doc)
         self.assertIn('querySelectorAll("td.body.is-expandable")', html_doc)
+        self.assertIn(">Settings<", html_doc)
+
+    def test_settings_template_supports_notice_and_table_markup(self):
+        html_doc = SETTINGS_PAGE_TEMPLATE.format(notice="<div>ok</div>", rows="<table><tbody></tbody></table>")
+        self.assertIn("法令 Settings", html_doc)
+        self.assertIn("検索へ戻る", html_doc)
+        self.assertIn("<div>ok</div>", html_doc)
+        self.assertIn("<table><tbody></tbody></table>", html_doc)
 
     def test_display_law_name_maps_main_and_suppl(self):
         self.assertEqual(LawSearchHandler._display_law_name("建築基準法", "main"), "法")
@@ -448,6 +525,10 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertEqual(LawSearchHandler._display_law_name("建築基準法施行令", "main"), "令")
         self.assertEqual(LawSearchHandler._display_law_name("建築基準法施行令", "suppl"), "令・附則")
         self.assertEqual(LawSearchHandler._display_law_name("その他", "main"), "その他")
+        self.assertEqual(
+            LawSearchHandler._display_law_name("建築物の耐震改修の促進に関する法律", "main"),
+            "建築物の耐震改修の促進に関する法律",
+        )
 
     def test_display_article_no_omits_leading_dai(self):
         self.assertEqual(LawSearchHandler._display_article_no("第六条"), "六条")
@@ -477,6 +558,18 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn("class='body-full' hidden", table_html)
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", table_html)
         self.assertIn("<mark>耐火</mark>", table_html)
+
+    def test_render_settings_table_shows_import_status_and_actions(self):
+        handler = object.__new__(LawSearchHandler)
+        table_html = LawSearchHandler.render_settings_table(handler, {LAW_REGISTRY[0].law_id})
+
+        self.assertIn("取込済", table_html)
+        self.assertIn("未取込", table_html)
+        self.assertIn(">更新<", table_html)
+        self.assertIn(">削除<", table_html)
+        self.assertIn(">追加<", table_html)
+        self.assertIn(LAW_REGISTRY[0].law_name, table_html)
+        self.assertIn(LAW_REGISTRY[-1].law_name, table_html)
 
     def test_web_search_missing_db_returns_warning_without_creating_file(self):
         tmpdir = pathlib.Path(tempfile.mkdtemp())
