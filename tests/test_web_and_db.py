@@ -524,6 +524,10 @@ class DatabaseAndWebTests(unittest.TestCase):
             meta_actions="<button class='bulk-copy-button'>全結果をコピー</button>",
             table="<div>ok</div>",
         )
+        self.assertIn('document.documentElement.dataset.theme = theme;', html_doc)
+        self.assertIn('localStorage.getItem(THEME_STORAGE_KEY)', html_doc)
+        self.assertIn('localStorage.setItem(THEME_STORAGE_KEY, theme);', html_doc)
+        self.assertIn('prefers-color-scheme: dark', html_doc)
         self.assertIn('document.addEventListener("DOMContentLoaded"', html_doc)
         self.assertIn("compositionstart", html_doc)
         self.assertIn("compositionend", html_doc)
@@ -538,14 +542,22 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn('feedback.textContent = "コピー済み"', html_doc)
         self.assertIn('feedback.hidden = false', html_doc)
         self.assertIn("meta-actions", html_doc)
+        self.assertIn('class="theme-toggle"', html_doc)
         self.assertIn(">全結果をコピー<", html_doc)
-        self.assertIn("background: #ffdca8;", html_doc)
+        self.assertIn("--mark-bg: #ffdca8;", html_doc)
+        self.assertIn("html[data-theme=\"dark\"]", html_doc)
+        self.assertIn("--mark-bg: #f2ad61;", html_doc)
         self.assertIn(">Settings<", html_doc)
 
     def test_settings_template_supports_notice_and_table_markup(self):
         html_doc = SETTINGS_PAGE_TEMPLATE.format(notice="<div>ok</div>", rows="<table><tbody></tbody></table>")
         self.assertIn("法令 Settings", html_doc)
         self.assertIn("検索へ戻る", html_doc)
+        self.assertIn('class="theme-toggle"', html_doc)
+        self.assertIn('localStorage.getItem(THEME_STORAGE_KEY)', html_doc)
+        self.assertIn('localStorage.setItem(THEME_STORAGE_KEY, theme);', html_doc)
+        self.assertIn('prefers-color-scheme: dark', html_doc)
+        self.assertIn("html[data-theme=\"dark\"]", html_doc)
         self.assertIn("<div>ok</div>", html_doc)
         self.assertIn("<table><tbody></tbody></table>", html_doc)
 

@@ -31,17 +31,99 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
 <head>
   <meta charset=\"utf-8\" />
   <title>建築法規検索</title>
+  <script>
+    (function () {{
+      const storageKey = "archi-law-search-theme";
+      const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+      let theme = prefersDark ? "dark" : "light";
+      try {{
+        const savedTheme = localStorage.getItem(storageKey);
+        if (savedTheme === "light" || savedTheme === "dark") {{
+          theme = savedTheme;
+        }}
+      }} catch (_error) {{
+      }}
+      document.documentElement.dataset.theme = theme;
+    }})();
+  </script>
   <style>
     *, *::before, *::after {{ box-sizing: border-box; }}
+    :root {{
+      color-scheme: light;
+      --bg-color: #f4f5f7;
+      --surface-color: #ffffff;
+      --surface-muted: #f7f9fc;
+      --surface-soft: #f8f9fb;
+      --surface-hover: #eef3fb;
+      --surface-accent: #f7fafd;
+      --text-color: #222222;
+      --text-strong: #1a2e4a;
+      --text-muted: #4e5968;
+      --text-subtle: #505c6d;
+      --link-color: #1f3656;
+      --accent-color: #3b6ea5;
+      --accent-hover: #2d5585;
+      --accent-soft: rgba(59, 110, 165, 0.15);
+      --border-color: #dde1e7;
+      --border-soft: #e2e7ef;
+      --border-table: #eaecef;
+      --border-input: #bfc5ce;
+      --border-button: #c9d3e0;
+      --border-copy: #d5dbe4;
+      --border-copy-hover: #aebccc;
+      --nav-bg: #ffffff;
+      --button-text: #ffffff;
+      --meta-strong: #1f3656;
+      --copy-button-bg: rgba(255, 255, 255, 0.92);
+      --copy-button-back: rgba(244, 245, 247, 0.98);
+      --feedback-bg: rgba(255, 255, 255, 0.92);
+      --feedback-border: #d6dee8;
+      --mark-bg: #ffdca8;
+      --shadow-ring: 0 0 0 3px rgba(59, 110, 165, 0.15);
+    }}
+    html[data-theme="dark"] {{
+      color-scheme: dark;
+      --bg-color: #111722;
+      --surface-color: #182131;
+      --surface-muted: #1d2738;
+      --surface-soft: #151f2e;
+      --surface-hover: #223147;
+      --surface-accent: #202c3e;
+      --text-color: #e6ebf2;
+      --text-strong: #f2f6fb;
+      --text-muted: #aeb9c8;
+      --text-subtle: #b6c0cf;
+      --link-color: #d9e5f4;
+      --accent-color: #628fca;
+      --accent-hover: #7aa3db;
+      --accent-soft: rgba(98, 143, 202, 0.24);
+      --border-color: #2c3a4f;
+      --border-soft: #33445c;
+      --border-table: #2a3648;
+      --border-input: #415269;
+      --border-button: #415269;
+      --border-copy: #46586f;
+      --border-copy-hover: #6d8199;
+      --nav-bg: #1b2637;
+      --button-text: #f7f9fc;
+      --meta-strong: #edf3fb;
+      --copy-button-bg: rgba(24, 33, 49, 0.94);
+      --copy-button-back: rgba(17, 23, 34, 0.98);
+      --feedback-bg: rgba(24, 33, 49, 0.95);
+      --feedback-border: #43556d;
+      --mark-bg: #f2ad61;
+      --shadow-ring: 0 0 0 3px rgba(98, 143, 202, 0.24);
+    }}
     body {{
       font-family: "Hiragino Sans", "Yu Gothic UI", sans-serif;
       margin: 0;
       padding: 1.5rem 1rem;
       max-width: 1100px;
       margin-inline: auto;
-      background: #f4f5f7;
-      color: #222;
+      background: var(--bg-color);
+      color: var(--text-color);
       font-size: 0.9375rem;
+      transition: background 0.18s ease, color 0.18s ease;
     }}
     .page-header {{
       display: flex;
@@ -53,8 +135,8 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
     h1 {{
       font-size: 1.25rem;
       font-weight: 700;
-      color: #1a2e4a;
-      border-left: 4px solid #3b6ea5;
+      color: var(--text-strong);
+      border-left: 4px solid var(--accent-color);
       padding-left: 0.75rem;
       margin: 0;
     }}
@@ -69,48 +151,74 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       justify-content: center;
       min-height: 2rem;
       padding: 0.35rem 0.9rem;
-      border: 1px solid #c9d3e0;
+      border: 1px solid var(--border-button);
       border-radius: 6px;
-      background: #fff;
-      color: #1f3656;
+      background: var(--nav-bg);
+      color: var(--link-color);
       text-decoration: none;
       font-size: 0.85rem;
       font-weight: 600;
+      transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
     }}
-    .nav-link:hover {{ background: #f7f9fc; }}
+    .nav-link:hover {{ background: var(--surface-muted); }}
+    .theme-toggle {{
+      width: 2rem;
+      min-width: 2rem;
+      height: 2rem;
+      padding: 0;
+      border: 1px solid var(--border-button);
+      border-radius: 999px;
+      background: var(--nav-bg);
+      color: var(--link-color);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.12s ease;
+    }}
+    .theme-toggle:hover, .theme-toggle:focus {{
+      background: var(--surface-muted);
+      border-color: var(--border-input);
+      outline: none;
+    }}
+    .theme-toggle:active {{ transform: translateY(1px); }}
+    .theme-toggle-icon {{
+      font-size: 0.96rem;
+      line-height: 1;
+    }}
     .search-form {{
-      background: #fff;
-      border: 1px solid #dde1e7;
+      background: var(--surface-color);
+      border: 1px solid var(--border-color);
       border-radius: 8px;
       padding: 0.95rem 1.1rem;
       margin-bottom: 0.6rem;
     }}
     .search-row {{ display: flex; flex-wrap: wrap; gap: 0.85rem; align-items: flex-end; }}
     .field {{ display: grid; gap: 0.3rem; }}
-    label {{ font-weight: 600; font-size: 0.8125rem; color: #444; }}
+    label {{ font-weight: 600; font-size: 0.8125rem; color: var(--text-muted); }}
     input[type=text] {{
       width: 18rem;
       max-width: 78vw;
       padding: 0.45rem 0.65rem;
-      border: 1px solid #bfc5ce;
+      border: 1px solid var(--border-input);
       border-radius: 5px;
       font-size: 0.9375rem;
-      color: #222;
-      background: #fafafa;
+      color: var(--text-color);
+      background: var(--surface-soft);
       transition: border-color 0.15s;
     }}
     input[type=text]:focus {{
       outline: none;
-      border-color: #3b6ea5;
-      background: #fff;
-      box-shadow: 0 0 0 3px rgba(59, 110, 165, 0.15);
+      border-color: var(--accent-color);
+      background: var(--surface-color);
+      box-shadow: var(--shadow-ring);
     }}
     #article_q {{ width: 14rem; }}
     #body_q {{ width: 30rem; max-width: 80vw; }}
     button, .action-button {{
       padding: 0.45rem 1.05rem;
-      background: #3b6ea5;
-      color: #fff;
+      background: var(--accent-color);
+      color: var(--button-text);
       border: none;
       border-radius: 5px;
       font-size: 0.875rem;
@@ -119,13 +227,13 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       transition: background 0.15s;
       text-decoration: none;
     }}
-    button:hover, .action-button:hover {{ background: #2d5585; }}
+    button:hover, .action-button:hover {{ background: var(--accent-hover); }}
     .meta {{
       font-size: 0.8125rem;
-      color: #4e5968;
+      color: var(--text-muted);
       margin: 0 0 0.7rem;
-      background: #f7f9fc;
-      border: 1px solid #e2e7ef;
+      background: var(--surface-muted);
+      border: 1px solid var(--border-soft);
       border-radius: 6px;
       padding: 0.45rem 0.7rem;
       display: flex;
@@ -135,7 +243,7 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
     }}
     .meta strong {{
       font-weight: 600;
-      color: #1f3656;
+      color: var(--meta-strong);
     }}
     .meta-actions {{
       display: flex;
@@ -147,17 +255,17 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
     }}
     .bulk-copy-button {{
       padding: 0.32rem 0.72rem;
-      background: #fff;
-      color: #35506e;
-      border: 1px solid #ccd5e0;
+      background: var(--surface-color);
+      color: var(--link-color);
+      border: 1px solid var(--border-button);
       border-radius: 5px;
       font-size: 0.8rem;
       font-weight: 600;
     }}
     .bulk-copy-button:hover, .bulk-copy-button:focus {{
-      background: #fdfefe;
-      border-color: #b4c2d1;
-      color: #223d59;
+      background: var(--surface-muted);
+      border-color: var(--border-input);
+      color: var(--text-strong);
       outline: none;
     }}
     .bulk-copy-button[hidden] {{ display: none; }}
@@ -167,9 +275,9 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       right: calc(100% + 0.35rem);
       transform: translateY(-50%);
       font-size: 0.74rem;
-      color: #5a6d83;
-      background: rgba(255, 255, 255, 0.92);
-      border: 1px solid #d6dee8;
+      color: var(--text-muted);
+      background: var(--feedback-bg);
+      border: 1px solid var(--feedback-border);
       border-radius: 999px;
       padding: 0.14rem 0.46rem;
       line-height: 1.2;
@@ -180,15 +288,15 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       border-collapse: collapse;
       width: 100%;
       margin-top: 0.35rem;
-      background: #fff;
-      border: 1px solid #dde1e7;
+      background: var(--surface-color);
+      border: 1px solid var(--border-color);
       border-radius: 8px;
       overflow: hidden;
       font-size: 0.875rem;
     }}
     thead th {{
-      background: #1a2e4a;
-      color: #fff;
+      background: var(--text-strong);
+      color: var(--button-text);
       border-top: none;
       padding: 0.6rem 0.75rem;
       text-align: left;
@@ -197,13 +305,13 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       white-space: nowrap;
     }}
     td {{
-      border-top: 1px solid #eaecef;
+      border-top: 1px solid var(--border-table);
       padding: 0.72rem 0.85rem;
       vertical-align: top;
     }}
-    tbody tr:nth-child(even) {{ background: #f8f9fb; }}
-    tbody tr:hover {{ background: #eef3fb; }}
-    .law {{ white-space: nowrap; color: #3b6ea5; font-weight: 600; width: 6rem; }}
+    tbody tr:nth-child(even) {{ background: var(--surface-soft); }}
+    tbody tr:hover {{ background: var(--surface-hover); }}
+    .law {{ white-space: nowrap; color: var(--accent-color); font-weight: 600; width: 6rem; }}
     .article {{ white-space: nowrap; width: 6rem; font-variant-numeric: tabular-nums; }}
     .body {{ white-space: pre-wrap; line-height: 1.72; font-size: 0.9rem; }}
     .body-wrap {{
@@ -220,7 +328,7 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       cursor: pointer;
       transition: background 0.15s;
     }}
-    .body.is-expandable:hover {{ background: #f7fafd; }}
+    .body.is-expandable:hover {{ background: var(--surface-accent); }}
     .body-preview, .body-full {{ white-space: pre-wrap; }}
     .body-full[hidden], .body-preview[hidden] {{ display: none; }}
     .copy-button {{
@@ -229,10 +337,10 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       right: 0;
       width: 1.65rem;
       height: 1.65rem;
-      border: 1px solid #d5dbe4;
+      border: 1px solid var(--border-copy);
       border-radius: 4px;
-      background: rgba(255, 255, 255, 0.92);
-      color: #5f6f82;
+      background: var(--copy-button-bg);
+      color: var(--text-muted);
       cursor: pointer;
       padding: 0;
       transition: border-color 0.15s, color 0.15s, background 0.15s;
@@ -248,31 +356,31 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
     .copy-button::before {{
       top: 0.42rem;
       left: 0.48rem;
-      background: rgba(255, 255, 255, 0.92);
+      background: var(--copy-button-bg);
     }}
     .copy-button::after {{
       top: 0.3rem;
       left: 0.62rem;
-      background: rgba(244, 245, 247, 0.98);
+      background: var(--copy-button-back);
     }}
     .copy-button:hover, .copy-button:focus {{
-      border-color: #aebccc;
-      color: #314b67;
-      background: #fff;
+      border-color: var(--border-copy-hover);
+      color: var(--text-strong);
+      background: var(--surface-color);
       outline: none;
     }}
     .copy-button[hidden] {{ display: none; }}
     .empty {{
       margin-top: 0.35rem;
-      background: #f9fbfd;
-      border: 1px solid #e2e7ef;
+      background: var(--surface-muted);
+      border: 1px solid var(--border-soft);
       border-radius: 8px;
       padding: 0.75rem 0.9rem;
-      color: #505c6d;
+      color: var(--text-subtle);
       font-size: 0.875rem;
     }}
     mark {{
-      background: #ffdca8;
+      background: var(--mark-bg);
       color: inherit;
       border-radius: 2px;
       padding: 0 2px;
@@ -283,6 +391,9 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
   <div class=\"page-header\">
     <h1>建築法規検索</h1>
     <div class=\"header-actions\">
+      <button type=\"button\" class=\"theme-toggle\" data-theme-toggle aria-label=\"テーマ切替\" title=\"ダークモードに切替\">
+        <span class=\"theme-toggle-icon\" aria-hidden=\"true\">☾</span>
+      </button>
       <a class=\"nav-link\" href=\"/settings\">Settings</a>
     </div>
   </div>
@@ -309,6 +420,47 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       const form = document.querySelector(".search-form");
       const articleInput = document.getElementById("article_q");
       const bodyInput = document.getElementById("body_q");
+      const themeToggle = document.querySelector("[data-theme-toggle]");
+      const themeIcon = themeToggle ? themeToggle.querySelector(".theme-toggle-icon") : null;
+
+      const THEME_STORAGE_KEY = "archi-law-search-theme";
+      const getPreferredTheme = function () {{
+        const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+        if (savedTheme === "light" || savedTheme === "dark") {{
+          return savedTheme;
+        }}
+        return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }};
+      const updateThemeToggle = function (theme) {{
+        if (!themeToggle || !themeIcon) {{
+          return;
+        }}
+        if (theme === "dark") {{
+          themeIcon.textContent = "☀";
+          themeToggle.setAttribute("title", "ライトモードに切替");
+          themeToggle.setAttribute("aria-label", "ライトモードに切替");
+        }} else {{
+          themeIcon.textContent = "☾";
+          themeToggle.setAttribute("title", "ダークモードに切替");
+          themeToggle.setAttribute("aria-label", "ダークモードに切替");
+        }}
+      }};
+      const applyTheme = function (theme, persist) {{
+        document.documentElement.dataset.theme = theme;
+        updateThemeToggle(theme);
+        if (persist) {{
+          localStorage.setItem(THEME_STORAGE_KEY, theme);
+        }}
+      }};
+
+      applyTheme(getPreferredTheme(), false);
+      if (themeToggle) {{
+        themeToggle.addEventListener("click", function () {{
+          const nextTheme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+          applyTheme(nextTheme, true);
+        }});
+      }}
+
       if (!form || !articleInput || !bodyInput) {{
         return;
       }}
@@ -491,17 +643,91 @@ SETTINGS_PAGE_TEMPLATE = """<!doctype html>
 <head>
   <meta charset=\"utf-8\" />
   <title>法令 Settings</title>
+  <script>
+    (function () {{
+      const storageKey = "archi-law-search-theme";
+      const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+      let theme = prefersDark ? "dark" : "light";
+      try {{
+        const savedTheme = localStorage.getItem(storageKey);
+        if (savedTheme === "light" || savedTheme === "dark") {{
+          theme = savedTheme;
+        }}
+      }} catch (_error) {{
+      }}
+      document.documentElement.dataset.theme = theme;
+    }})();
+  </script>
   <style>
     *, *::before, *::after {{ box-sizing: border-box; }}
+    :root {{
+      color-scheme: light;
+      --bg-color: #f4f5f7;
+      --surface-color: #ffffff;
+      --surface-muted: #f7f9fc;
+      --surface-soft: #f8f9fb;
+      --text-color: #222222;
+      --text-strong: #1a2e4a;
+      --text-muted: #4e5968;
+      --text-subtle: #5b6572;
+      --link-color: #1f3656;
+      --accent-color: #3b6ea5;
+      --accent-hover: #2d5585;
+      --border-color: #dde1e7;
+      --border-soft: #d9e2ef;
+      --border-row: #eaecef;
+      --border-button: #c9d3e0;
+      --button-secondary: #5f748e;
+      --button-secondary-hover: #4d627b;
+      --button-danger: #a44949;
+      --button-danger-hover: #883939;
+      --nav-bg: #ffffff;
+      --button-text: #ffffff;
+      --notice-bg: #f7f9fc;
+      --notice-text: #1f3656;
+      --notice-error-bg: #fff3f3;
+      --notice-error-border: #edc7c7;
+      --notice-error-text: #8b2e2e;
+    }}
+    html[data-theme="dark"] {{
+      color-scheme: dark;
+      --bg-color: #111722;
+      --surface-color: #182131;
+      --surface-muted: #1d2738;
+      --surface-soft: #151f2e;
+      --text-color: #e6ebf2;
+      --text-strong: #f2f6fb;
+      --text-muted: #aeb9c8;
+      --text-subtle: #b6c0cf;
+      --link-color: #d9e5f4;
+      --accent-color: #628fca;
+      --accent-hover: #7aa3db;
+      --border-color: #2c3a4f;
+      --border-soft: #33445c;
+      --border-row: #2a3648;
+      --border-button: #415269;
+      --button-secondary: #617791;
+      --button-secondary-hover: #7590b0;
+      --button-danger: #b85a5a;
+      --button-danger-hover: #cf7070;
+      --nav-bg: #1b2637;
+      --button-text: #f7f9fc;
+      --notice-bg: #1d2738;
+      --notice-text: #edf3fb;
+      --notice-error-bg: #3a2024;
+      --notice-error-border: #75474d;
+      --notice-error-text: #f2c7c7;
+    }}
     body {{
       font-family: "Hiragino Sans", "Yu Gothic UI", sans-serif;
       margin: 0;
       padding: 1.5rem 1rem 2rem;
       max-width: 1100px;
       margin-inline: auto;
-      background: #f4f5f7;
-      color: #222;
+      background: var(--bg-color);
+      color: var(--text-color);
       font-size: 0.9375rem;
+      transition: background 0.18s ease, color 0.18s ease;
     }}
     .page-header {{
       display: flex;
@@ -513,10 +739,15 @@ SETTINGS_PAGE_TEMPLATE = """<!doctype html>
     h1 {{
       font-size: 1.2rem;
       font-weight: 700;
-      color: #1a2e4a;
-      border-left: 4px solid #3b6ea5;
+      color: var(--text-strong);
+      border-left: 4px solid var(--accent-color);
       padding-left: 0.75rem;
       margin: 0;
+    }}
+    .header-actions {{
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
     }}
     .nav-link {{
       display: inline-flex;
@@ -524,24 +755,50 @@ SETTINGS_PAGE_TEMPLATE = """<!doctype html>
       justify-content: center;
       min-height: 2rem;
       padding: 0.35rem 0.9rem;
-      border: 1px solid #c9d3e0;
+      border: 1px solid var(--border-button);
       border-radius: 6px;
-      background: #fff;
-      color: #1f3656;
+      background: var(--nav-bg);
+      color: var(--link-color);
       text-decoration: none;
       font-size: 0.85rem;
       font-weight: 600;
+      transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
     }}
-    .nav-link:hover {{ background: #f7f9fc; }}
+    .nav-link:hover {{ background: var(--surface-muted); }}
+    .theme-toggle {{
+      width: 2rem;
+      min-width: 2rem;
+      height: 2rem;
+      padding: 0;
+      border: 1px solid var(--border-button);
+      border-radius: 999px;
+      background: var(--nav-bg);
+      color: var(--link-color);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.12s ease;
+    }}
+    .theme-toggle:hover, .theme-toggle:focus {{
+      background: var(--surface-muted);
+      border-color: var(--border-color);
+      outline: none;
+    }}
+    .theme-toggle:active {{ transform: translateY(1px); }}
+    .theme-toggle-icon {{
+      font-size: 0.96rem;
+      line-height: 1;
+    }}
     .panel {{
-      background: #fff;
-      border: 1px solid #dde1e7;
+      background: var(--surface-color);
+      border: 1px solid var(--border-color);
       border-radius: 8px;
       padding: 1rem 1.1rem 1.1rem;
     }}
     .panel p {{
       margin: 0 0 0.9rem;
-      color: #4e5968;
+      color: var(--text-muted);
       line-height: 1.6;
     }}
     .notice {{
@@ -549,14 +806,14 @@ SETTINGS_PAGE_TEMPLATE = """<!doctype html>
       border-radius: 6px;
       padding: 0.65rem 0.8rem;
       font-size: 0.875rem;
-      border: 1px solid #d9e2ef;
-      background: #f7f9fc;
-      color: #1f3656;
+      border: 1px solid var(--border-soft);
+      background: var(--notice-bg);
+      color: var(--notice-text);
     }}
     .notice.is-error {{
-      border-color: #edc7c7;
-      background: #fff3f3;
-      color: #8b2e2e;
+      border-color: var(--notice-error-border);
+      background: var(--notice-error-bg);
+      color: var(--notice-error-text);
     }}
     table {{
       border-collapse: collapse;
@@ -564,22 +821,22 @@ SETTINGS_PAGE_TEMPLATE = """<!doctype html>
       font-size: 0.875rem;
     }}
     thead th {{
-      background: #1a2e4a;
-      color: #fff;
+      background: var(--text-strong);
+      color: var(--button-text);
       padding: 0.65rem 0.75rem;
       text-align: left;
       white-space: nowrap;
       font-size: 0.8125rem;
     }}
     tbody td {{
-      border-top: 1px solid #eaecef;
+      border-top: 1px solid var(--border-row);
       padding: 0.78rem 0.75rem;
       vertical-align: middle;
     }}
-    tbody tr:nth-child(even) {{ background: #f8f9fb; }}
+    tbody tr:nth-child(even) {{ background: var(--surface-soft); }}
     .law-name {{
       font-weight: 600;
-      color: #1f3656;
+      color: var(--link-color);
       line-height: 1.5;
     }}
     .status-badge {{
@@ -588,17 +845,17 @@ SETTINGS_PAGE_TEMPLATE = """<!doctype html>
       min-height: 1.9rem;
       padding: 0.2rem 0.65rem;
       border-radius: 999px;
-      border: 1px solid #c9d3e0;
-      background: #eef3fb;
-      color: #1f3656;
+      border: 1px solid var(--border-button);
+      background: var(--surface-muted);
+      color: var(--link-color);
       font-size: 0.8125rem;
       font-weight: 600;
       white-space: nowrap;
     }}
     .status-badge.is-off {{
-      background: #f5f5f6;
-      color: #5b6572;
-      border-color: #d8dce1;
+      background: var(--surface-soft);
+      color: var(--text-subtle);
+      border-color: var(--border-color);
     }}
     .actions {{
       display: flex;
@@ -613,25 +870,25 @@ SETTINGS_PAGE_TEMPLATE = """<!doctype html>
       font-size: 0.85rem;
       font-weight: 600;
       cursor: pointer;
-      background: #3b6ea5;
-      color: #fff;
+      background: var(--accent-color);
+      color: var(--button-text);
     }}
-    button:hover {{ background: #2d5585; }}
+    button:hover {{ background: var(--accent-hover); }}
     .button-secondary {{
-      background: #5f748e;
+      background: var(--button-secondary);
     }}
     .button-secondary:hover {{
-      background: #4d627b;
+      background: var(--button-secondary-hover);
     }}
     .button-danger {{
-      background: #a44949;
+      background: var(--button-danger);
     }}
     .button-danger:hover {{
-      background: #883939;
+      background: var(--button-danger-hover);
     }}
     .empty {{
       margin-top: 0.6rem;
-      color: #5b6572;
+      color: var(--text-subtle);
       font-size: 0.875rem;
     }}
   </style>
@@ -639,13 +896,61 @@ SETTINGS_PAGE_TEMPLATE = """<!doctype html>
 <body>
   <div class=\"page-header\">
     <h1>法令 Settings</h1>
-    <a class=\"nav-link\" href=\"/\">検索へ戻る</a>
+    <div class=\"header-actions\">
+      <button type=\"button\" class=\"theme-toggle\" data-theme-toggle aria-label=\"テーマ切替\" title=\"ダークモードに切替\">
+        <span class=\"theme-toggle-icon\" aria-hidden=\"true\">☾</span>
+      </button>
+      <a class=\"nav-link\" href=\"/\">検索へ戻る</a>
+    </div>
   </div>
   <div class=\"panel\">
     <p>検索対象に含める法令を管理します。取込済の法令は検索対象になり、未取込の法令はここから追加できます。</p>
     {notice}
     {rows}
   </div>
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {{
+      const themeToggle = document.querySelector("[data-theme-toggle]");
+      const themeIcon = themeToggle ? themeToggle.querySelector(".theme-toggle-icon") : null;
+      const THEME_STORAGE_KEY = "archi-law-search-theme";
+      const getPreferredTheme = function () {{
+        const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+        if (savedTheme === "light" || savedTheme === "dark") {{
+          return savedTheme;
+        }}
+        return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }};
+      const updateThemeToggle = function (theme) {{
+        if (!themeToggle || !themeIcon) {{
+          return;
+        }}
+        if (theme === "dark") {{
+          themeIcon.textContent = "☀";
+          themeToggle.setAttribute("title", "ライトモードに切替");
+          themeToggle.setAttribute("aria-label", "ライトモードに切替");
+        }} else {{
+          themeIcon.textContent = "☾";
+          themeToggle.setAttribute("title", "ダークモードに切替");
+          themeToggle.setAttribute("aria-label", "ダークモードに切替");
+        }}
+      }};
+      const applyTheme = function (theme, persist) {{
+        document.documentElement.dataset.theme = theme;
+        updateThemeToggle(theme);
+        if (persist) {{
+          localStorage.setItem(THEME_STORAGE_KEY, theme);
+        }}
+      }};
+
+      applyTheme(getPreferredTheme(), false);
+      if (themeToggle) {{
+        themeToggle.addEventListener("click", function () {{
+          const nextTheme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+          applyTheme(nextTheme, true);
+        }});
+      }}
+    }});
+  </script>
 </body>
 </html>
 """
