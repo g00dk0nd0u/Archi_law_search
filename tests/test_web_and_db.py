@@ -127,6 +127,25 @@ SAMPLE_UPDATED_XML = """
 """
 
 
+SAMPLE_HEADING_XML = """
+<Root>
+  <LawBody>
+    <MainProvision>
+      <Article>
+        <ArticleTitle>第27条</ArticleTitle>
+        <Paragraph>
+          <ParagraphNum>1</ParagraphNum>
+          <ParagraphSentence>
+            <Sentence>（耐火建築物等としなければならない特殊建築物）劇場、映画館その他の特殊建築物は耐火構造としなければならない。</Sentence>
+          </ParagraphSentence>
+        </Paragraph>
+      </Article>
+    </MainProvision>
+  </LawBody>
+</Root>
+"""
+
+
 SAMPLE_KANJI_ORDER_XML = """
 <Root>
   <LawBody>
@@ -530,6 +549,18 @@ class DatabaseAndWebTests(unittest.TestCase):
             "建築物の耐震改修の促進に関する法律",
         )
 
+    def test_build_like_snippet_prepends_leading_heading_when_present(self):
+        body = "（耐火建築物等としなければならない特殊建築物）劇場、映画館その他の特殊建築物は耐火構造としなければならない。"
+        snippet = LawSearchHandler._build_like_snippet(body, "耐火")
+        self.assertTrue(snippet.startswith("（耐火建築物等としなければならない特殊建築物）\n"))
+        self.assertIn("<mark>耐火</mark>", snippet)
+
+    def test_build_like_snippet_keeps_plain_snippet_when_heading_missing(self):
+        body = "劇場、映画館その他の特殊建築物は耐火構造としなければならない。"
+        snippet = LawSearchHandler._build_like_snippet(body, "耐火")
+        self.assertFalse(snippet.startswith("（"))
+        self.assertIn("<mark>耐火</mark>", snippet)
+
     def test_display_article_no_omits_leading_dai(self):
         self.assertEqual(LawSearchHandler._display_article_no("第六条"), "六条")
         self.assertEqual(LawSearchHandler._display_article_no("第2条の2"), "2条の2")
@@ -558,6 +589,27 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn("class='body-full' hidden", table_html)
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", table_html)
         self.assertIn("<mark>耐火</mark>", table_html)
+
+    def test_search_body_prepends_heading_to_like_snippet(self):
+        heading_root = ET.fromstring(SAMPLE_HEADING_XML)
+        source = LawSource("X300", "建築基準法")
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as tf:
+            conn = sqlite3.connect(tf.name)
+            init_db(conn)
+            upsert_law(conn, source, heading_root)
+            conn.commit()
+            conn.close()
+
+            handler = object.__new__(LawSearchHandler)
+            handler.db_path = tf.name
+
+            rows, warning = LawSearchHandler.search_body(handler, "耐火")
+
+        self.assertEqual(warning, "")
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0][2].startswith("（耐火建築物等としなければならない特殊建築物）\n"))
+        self.assertIn("<mark>耐火</mark>", rows[0][2])
 
     def test_render_settings_table_shows_import_status_and_actions(self):
         handler = object.__new__(LawSearchHandler)

@@ -776,11 +776,32 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         return safe.replace(placeholder_open, "<mark>").replace(placeholder_close, "</mark>")
 
     @staticmethod
-    def _build_like_snippet(body_text: str, query: str, radius: int = 80) -> str:
+    def _extract_leading_heading(body_text: str, max_scan_length: int = 240, max_heading_length: int = 80) -> str:
+        body_text = (body_text or "").strip()
+        if not body_text:
+            return ""
+
+        match = re.search(r"（[^）]{1," + str(max_heading_length) + r"}）", body_text[:max_scan_length])
+        if match is None:
+            return ""
+        return match.group(0)
+
+    @classmethod
+    def _prepend_heading_to_snippet(cls, body_text: str, snippet: str) -> str:
+        heading = cls._extract_leading_heading(body_text)
+        if not heading:
+            return snippet
+        if snippet.startswith(heading):
+            return snippet
+        return f"{heading}\n{snippet}"
+
+    @classmethod
+    def _build_like_snippet(cls, body_text: str, query: str, radius: int = 80) -> str:
         body_text = body_text or ""
         idx = body_text.find(query)
         if idx < 0:
-            return body_text[: radius * 2]
+            snippet = body_text[: radius * 2]
+            return cls._prepend_heading_to_snippet(body_text, snippet)
 
         start = max(0, idx - radius)
         end = min(len(body_text), idx + len(query) + radius)
@@ -789,7 +810,8 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             snippet = f"… {snippet}"
         if end < len(body_text):
             snippet = f"{snippet} …"
-        return snippet.replace(query, f"<mark>{query}</mark>", 1)
+        snippet = snippet.replace(query, f"<mark>{query}</mark>", 1)
+        return cls._prepend_heading_to_snippet(body_text, snippet)
 
     @staticmethod
     def _highlight_text(text: str, query: str) -> str:
