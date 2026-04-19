@@ -49,15 +49,15 @@ PAGE_TEMPLATE = """<!doctype html>
       background: #fff;
       border: 1px solid #dde1e7;
       border-radius: 8px;
-      padding: 1rem 1.25rem;
-      margin-bottom: 1rem;
+      padding: 0.95rem 1.1rem;
+      margin-bottom: 0.6rem;
     }}
-    .search-row {{ display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; }}
+    .search-row {{ display: flex; flex-wrap: wrap; gap: 0.85rem; align-items: flex-end; }}
     .field {{ display: grid; gap: 0.3rem; }}
     label {{ font-weight: 600; font-size: 0.8125rem; color: #444; }}
     input[type=text] {{
-      width: 22rem;
-      max-width: 80vw;
+      width: 18rem;
+      max-width: 78vw;
       padding: 0.45rem 0.65rem;
       border: 1px solid #bfc5ce;
       border-radius: 5px;
@@ -72,6 +72,8 @@ PAGE_TEMPLATE = """<!doctype html>
       background: #fff;
       box-shadow: 0 0 0 3px rgba(59, 110, 165, 0.15);
     }}
+    #article_q {{ width: 14rem; }}
+    #body_q {{ width: 30rem; max-width: 80vw; }}
     button[type=submit] {{
       padding: 0.45rem 1.25rem;
       background: #3b6ea5;
@@ -87,17 +89,21 @@ PAGE_TEMPLATE = """<!doctype html>
     button[type=submit]:hover {{ background: #2d5585; }}
     .meta {{
       font-size: 0.8125rem;
-      color: #666;
-      margin: 0.5rem 0 0.75rem;
+      color: #4e5968;
+      margin: 0 0 0.7rem;
+      background: #f7f9fc;
+      border: 1px solid #e2e7ef;
+      border-radius: 6px;
+      padding: 0.45rem 0.7rem;
     }}
     .meta strong {{
-      font-weight: 700;
-      color: #1a2e4a;
+      font-weight: 600;
+      color: #1f3656;
     }}
     table {{
       border-collapse: collapse;
       width: 100%;
-      margin-top: 0.5rem;
+      margin-top: 0.35rem;
       background: #fff;
       border: 1px solid #dde1e7;
       border-radius: 8px;
@@ -116,21 +122,21 @@ PAGE_TEMPLATE = """<!doctype html>
     }}
     td {{
       border-top: 1px solid #eaecef;
-      padding: 0.7rem 0.8rem;
+      padding: 0.72rem 0.85rem;
       vertical-align: top;
     }}
     tbody tr:nth-child(even) {{ background: #f8f9fb; }}
     tbody tr:hover {{ background: #eef3fb; }}
     .law {{ white-space: nowrap; color: #3b6ea5; font-weight: 600; width: 3.5rem; }}
     .article {{ white-space: nowrap; width: 6rem; font-variant-numeric: tabular-nums; }}
-    .body {{ white-space: pre-wrap; line-height: 1.6; }}
+    .body {{ white-space: pre-wrap; line-height: 1.72; font-size: 0.9rem; }}
     .empty {{
-      margin-top: 0.5rem;
-      background: #fff;
-      border: 1px solid #dde1e7;
+      margin-top: 0.35rem;
+      background: #f9fbfd;
+      border: 1px solid #e2e7ef;
       border-radius: 8px;
       padding: 0.75rem 0.9rem;
-      color: #555;
+      color: #505c6d;
       font-size: 0.875rem;
     }}
     mark {{
