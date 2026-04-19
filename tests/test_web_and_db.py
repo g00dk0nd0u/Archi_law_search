@@ -42,7 +42,7 @@ SAMPLE_XML = """
         <Paragraph>
           <ParagraphNum>1</ParagraphNum>
           <ParagraphSentence>
-            <Sentence>防火設備に関する規定。</Sentence>
+            <Sentence>防火設備と排煙に関する規定。</Sentence>
           </ParagraphSentence>
         </Paragraph>
       </Article>
@@ -113,6 +113,11 @@ class DatabaseAndWebTests(unittest.TestCase):
             self.assertEqual(len(rows_kanji), 1)
             self.assertEqual(warning_kanji, "")
 
+            rows_filtered, warning_filtered = LawSearchHandler.search_article_with_body_keyword(handler, "2", "煙")
+            self.assertEqual([row[1] for row in rows_filtered], ["第2条の2"])
+            self.assertEqual(warning_filtered, "")
+            self.assertIn("<mark>煙</mark>", rows_filtered[0][2])
+
             # 日本語の部分一致でもヒットする
             rows_partial, warning_partial = LawSearchHandler.search_body(handler, "耐火")
             self.assertGreaterEqual(len(rows_partial), 1)
@@ -156,6 +161,14 @@ class DatabaseAndWebTests(unittest.TestCase):
             LawSearchHandler._build_meta([], "クエリをフレーズ検索に変換"),
             "0件ヒット（クエリをフレーズ検索に変換）",
         )
+
+    def test_filter_article_rows_by_body_keyword_highlights_matches(self):
+        rows = [
+            ("法", "第2条", "一般構造に関する規定。"),
+            ("法", "第2条の2", "防火設備と排煙に関する規定。"),
+        ]
+        filtered = LawSearchHandler._filter_article_rows_by_body_keyword(rows, "煙")
+        self.assertEqual(filtered, [("法", "第2条の2", "防火設備と排<mark>煙</mark>に関する規定。")])
 
     def test_web_search_missing_db_returns_warning_without_creating_file(self):
         tmpdir = pathlib.Path(tempfile.mkdtemp())

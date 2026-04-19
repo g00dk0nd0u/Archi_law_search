@@ -66,14 +66,17 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             return
 
         article_query, body_query = self._parse_search_inputs(parsed.query)
-        search_mode, active_query = self._select_search_query(article_query, body_query)
         rows = []
         warning = ""
-        if search_mode == "article":
-            rows, warning = self.search_article(active_query)
-        elif search_mode == "body":
-            rows, warning = self.search_body(active_query)
-        if search_mode:
+        if article_query and body_query:
+            rows, warning = self.search_article_with_body_keyword(article_query, body_query)
+        else:
+            search_mode, active_query = self._select_search_query(article_query, body_query)
+            if search_mode == "article":
+                rows, warning = self.search_article(active_query)
+            elif search_mode == "body":
+                rows, warning = self.search_body(active_query)
+        if article_query or body_query:
             meta = self._build_meta(rows, warning)
         else:
             meta = "キーワードを入力してください"
@@ -132,6 +135,12 @@ class LawSearchHandler(BaseHTTPRequestHandler):
 
     def search(self, query: str):
         return self.search_body(query)
+
+    def search_article_with_body_keyword(self, article_query: str, body_query: str):
+        rows, warning = self.search_article(article_query)
+        if not body_query or warning:
+            return rows, warning
+        return self._filter_article_rows_by_body_keyword(rows, body_query), warning
 
     def search_article(self, query: str):
         conn, warning = self._connect_db()
@@ -220,6 +229,21 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         if end < len(body_text):
             snippet = f"{snippet} …"
         return snippet.replace(query, f"<mark>{query}</mark>", 1)
+
+    @staticmethod
+    def _highlight_text(text: str, query: str) -> str:
+        if not text or not query or query not in text:
+            return text
+        return text.replace(query, f"<mark>{query}</mark>")
+
+    @classmethod
+    def _filter_article_rows_by_body_keyword(cls, rows, body_query: str):
+        filtered_rows = []
+        for law_name, article_no, body in rows:
+            if body_query not in body:
+                continue
+            filtered_rows.append((law_name, article_no, cls._highlight_text(body, body_query)))
+        return filtered_rows
 
     @staticmethod
     def _article_query_variants(query: str) -> tuple[list[str], tuple[int | None, int | None]]:
