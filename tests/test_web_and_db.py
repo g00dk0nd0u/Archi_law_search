@@ -1,3 +1,5 @@
+"""SQLite取り込み・検索UI・通信補助の回帰を確認するテスト群。"""
+
 from __future__ import annotations
 
 import pathlib
@@ -14,6 +16,7 @@ import sys
 sys.path.append(str(ROOT / "src"))
 
 from law_database import LawSource, init_db, iter_articles, upsert_law  # type: ignore
+import laws_api  # type: ignore
 from web_app import LawSearchHandler, build_server_url, open_browser  # type: ignore
 
 
@@ -95,6 +98,23 @@ SAMPLE_ORDER_XML = """
 
 
 class DatabaseAndWebTests(unittest.TestCase):
+    def test_ca_bundle_path_exists(self):
+        ca_bundle_path = laws_api.get_ca_bundle_path()
+        self.assertTrue(ca_bundle_path.exists())
+        self.assertEqual(ca_bundle_path.name, "cacert.pem")
+
+    def test_create_ssl_context_uses_repo_ca_bundle(self):
+        with mock.patch("laws_api.ssl.create_default_context", return_value="ctx") as create_default_context:
+            context = laws_api.create_ssl_context()
+        self.assertEqual(context, "ctx")
+        create_default_context.assert_called_once_with(cafile=str(laws_api.get_ca_bundle_path()))
+
+    def test_create_ssl_context_raises_when_ca_bundle_missing(self):
+        missing_path = pathlib.Path("/tmp/does-not-exist-cacert.pem")
+        with mock.patch("laws_api.get_ca_bundle_path", return_value=missing_path):
+            with self.assertRaises(FileNotFoundError):
+                laws_api.create_ssl_context()
+
     def test_build_server_url(self):
         self.assertEqual(build_server_url("127.0.0.1", 8765), "http://127.0.0.1:8765")
 

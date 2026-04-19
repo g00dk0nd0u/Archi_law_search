@@ -1,3 +1,5 @@
+"""条番号検索と本文検索の解釈・展開ロジックをまとめる。"""
+
 import re
 import xml.etree.ElementTree as ET
 

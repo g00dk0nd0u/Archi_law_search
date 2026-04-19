@@ -1,3 +1,5 @@
+"""法令XMLから条文レコードを作り、SQLiteへ保存する処理を担当する。"""
+
 import sqlite3
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass

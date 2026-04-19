@@ -1,3 +1,5 @@
+"""XML要素から本文文字列を取り出して表示用に整える共通関数。"""
+
 import xml.etree.ElementTree as ET
 
 

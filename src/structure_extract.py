@@ -1,3 +1,5 @@
+"""法令XMLの階層構造を取り出し、表示向けの平文へ整形する。"""
+
 import json
 import xml.etree.ElementTree as ET
 

@@ -1,3 +1,5 @@
+"""e-Gov から法令を取得し、検索用SQLite DBを作り直すCLI入口。"""
+
 import argparse
 from pathlib import Path
 

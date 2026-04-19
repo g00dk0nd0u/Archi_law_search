@@ -1,4 +1,7 @@
+"""SQLiteに保存した法令データをブラウザから検索するローカルWeb UI。"""
+
 import argparse
+from contextlib import closing
 import html
 from pathlib import Path
 import re
@@ -174,7 +177,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             LIMIT 100
         """
 
-        with conn:
+        with closing(conn):
             article_variants, parsed_article = self._article_query_variants(query)
             main_num, branch_num = parsed_article
             where_parts = ["a.article_no = ?" for _ in article_variants]
@@ -227,7 +230,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             LIMIT 100
         """
 
-        with conn:
+        with closing(conn):
             like_rows = conn.execute(like_sql, (f"%{query}%", f"%{query}%")).fetchall()
             if like_rows:
                 return [
