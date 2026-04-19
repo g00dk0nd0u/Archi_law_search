@@ -526,6 +526,8 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn('document.addEventListener("DOMContentLoaded"', html_doc)
         self.assertIn("compositionstart", html_doc)
         self.assertIn("compositionend", html_doc)
+        self.assertIn("if (!articleValue && !bodyValue) {", html_doc)
+        self.assertIn("return true;", html_doc)
         self.assertIn("bodyValue.length < 2", html_doc)
         self.assertIn("AUTO_SUBMIT_DELAY_MS = 700", html_doc)
         self.assertIn('querySelectorAll("td.body.is-expandable")', html_doc)
@@ -596,6 +598,22 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn("class='body-full' hidden", table_html)
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", table_html)
         self.assertIn("<mark>耐火</mark>", table_html)
+
+    def test_handle_search_page_empty_query_returns_initial_empty_state(self):
+        handler = object.__new__(LawSearchHandler)
+        captured = {}
+
+        def fake_send_html(body: bytes):
+            captured["html"] = body.decode("utf-8")
+
+        handler._send_html = fake_send_html
+        handler.render_table = LawSearchHandler.render_table.__get__(handler, LawSearchHandler)
+
+        parsed = type("Parsed", (), {"query": ""})()
+        LawSearchHandler._handle_search_page(handler, parsed)
+
+        self.assertIn("キーワードを入力してください", captured["html"])
+        self.assertIn("該当する条文が見つかりませんでした。検索語を変えて再度お試しください。", captured["html"])
 
     def test_search_body_prepends_heading_to_like_snippet(self):
         heading_root = ET.fromstring(SAMPLE_HEADING_XML)

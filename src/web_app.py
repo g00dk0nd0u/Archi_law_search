@@ -237,7 +237,7 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
           return false;
         }}
         if (!articleValue && !bodyValue) {{
-          return false;
+          return true;
         }}
         if (!articleValue && bodyValue.length < 2) {{
           return false;
