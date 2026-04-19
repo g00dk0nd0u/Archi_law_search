@@ -570,6 +570,11 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertFalse(snippet.startswith("（"))
         self.assertIn("<mark>耐火</mark>", snippet)
 
+    def test_extract_leading_heading_ignores_parentheses_that_are_not_at_start(self):
+        body = "第三条\n消防長（消防本部を置かない市町村においては、市町村長。）は、危険物又は放置された物件の処理を行う。"
+        heading = LawSearchHandler._extract_leading_heading(body)
+        self.assertEqual(heading, "")
+
     def test_display_article_no_omits_leading_dai(self):
         self.assertEqual(LawSearchHandler._display_article_no("第六条"), "六条")
         self.assertEqual(LawSearchHandler._display_article_no("第2条の2"), "2条の2")
@@ -676,6 +681,46 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0][2].count("（特殊建築物等の"), 1)
         self.assertIn("<mark>内装</mark>", rows[0][2])
+
+    def test_search_body_does_not_treat_inline_parentheses_as_heading(self):
+        body = "第三条\n消防長（消防本部を置かない市町村においては、市町村長。）は、危険物又は放置された物件の処理を行い、当該物件が放置されたときは措置を命ずることができる。"
+        source = LawSource("X302", "消防法")
+        root = ET.fromstring(
+            f"""
+<Root>
+  <LawBody>
+    <MainProvision>
+      <Article>
+        <ArticleTitle>第三条</ArticleTitle>
+        <Paragraph>
+          <ParagraphNum>1</ParagraphNum>
+          <ParagraphSentence>
+            <Sentence>{body}</Sentence>
+          </ParagraphSentence>
+        </Paragraph>
+      </Article>
+    </MainProvision>
+  </LawBody>
+</Root>
+"""
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as tf:
+            conn = sqlite3.connect(tf.name)
+            init_db(conn)
+            upsert_law(conn, source, root)
+            conn.commit()
+            conn.close()
+
+            handler = object.__new__(LawSearchHandler)
+            handler.db_path = tf.name
+
+            rows, warning = LawSearchHandler.search_body(handler, "放置")
+
+        self.assertEqual(warning, "")
+        self.assertEqual(len(rows), 1)
+        self.assertFalse(rows[0][2].startswith("（消防本部を置かない市町村においては、市町村長。）\n"))
+        self.assertIn("<mark>放置</mark>", rows[0][2])
 
     def test_render_settings_table_shows_import_status_and_actions(self):
         handler = object.__new__(LawSearchHandler)

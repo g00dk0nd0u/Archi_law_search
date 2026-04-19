@@ -781,7 +781,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         if not body_text:
             return ""
 
-        match = re.search(r"（[^）]{1," + str(max_heading_length) + r"}）", body_text[:max_scan_length])
+        match = re.match(r"（[^）]{1," + str(max_heading_length) + r"}）", body_text[:max_scan_length])
         if match is None:
             return ""
         return match.group(0)
