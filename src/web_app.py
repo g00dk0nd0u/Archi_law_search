@@ -61,6 +61,12 @@ PAGE_TEMPLATE = """<!doctype html>
 
 class LawSearchHandler(BaseHTTPRequestHandler):
     db_path = str(DEFAULT_DB_PATH)
+    LAW_DISPLAY_LABELS = {
+        ("建築基準法", "main"): "法",
+        ("建築基準法", "suppl"): "法・附則",
+        ("建築基準法施行令", "main"): "令",
+        ("建築基準法施行令", "suppl"): "令・附則",
+    }
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -151,11 +157,20 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             return [], warning
 
         sql = """
-            SELECT l.law_name, a.article_no, a.body
+            SELECT l.law_name, a.provision_kind, a.article_no, a.body
             FROM articles a
             JOIN laws l ON l.law_id = a.law_id
-            WHERE {where_clause}
-            ORDER BY a.article_sort_base, a.article_sort_branch
+            WHERE a.provision_kind = 'main' AND ({where_clause})
+            ORDER BY
+                CASE l.law_name
+                    WHEN '建築基準法' THEN 0
+                    WHEN '建築基準法施行令' THEN 1
+                    ELSE 2
+                END,
+                a.article_sort_base,
+                a.article_sort_branch,
+                CASE a.provision_kind WHEN 'main' THEN 0 ELSE 1 END,
+                a.article_no
             LIMIT 100
         """
 
@@ -169,7 +184,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
                 where_parts.extend(["a.article_no LIKE ?" for _ in branchable_variants])
                 params.extend([f"{variant}の%" for variant in branchable_variants])
             rows = conn.execute(sql.format(where_clause="\n               OR ".join(where_parts)), params).fetchall()
-            return [(law_name, article_no, body) for law_name, article_no, body in rows], ""
+            return self._format_result_rows(rows), ""
 
     def search_body(self, query: str):
         conn, warning = self._connect_db()
@@ -177,20 +192,38 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             return [], warning
 
         like_sql = """
-            SELECT l.law_name, a.article_no, a.body
+            SELECT l.law_name, a.provision_kind, a.article_no, a.body
             FROM articles a
             JOIN laws l ON l.law_id = a.law_id
-            WHERE a.body LIKE ? OR l.law_name LIKE ?
-            ORDER BY a.article_sort_base, a.article_sort_branch
+            WHERE a.provision_kind = 'main' AND (a.body LIKE ? OR l.law_name LIKE ?)
+            ORDER BY
+                CASE l.law_name
+                    WHEN '建築基準法' THEN 0
+                    WHEN '建築基準法施行令' THEN 1
+                    ELSE 2
+                END,
+                a.article_sort_base,
+                a.article_sort_branch,
+                CASE a.provision_kind WHEN 'main' THEN 0 ELSE 1 END,
+                a.article_no
             LIMIT 100
         """
         fts_sql = """
-            SELECT l.law_name, a.article_no, snippet(articles_fts, 1, '<mark>', '</mark>', ' … ', 16)
+            SELECT l.law_name, a.provision_kind, a.article_no, snippet(articles_fts, 1, '<mark>', '</mark>', ' … ', 16)
             FROM articles_fts
             JOIN articles a ON a.id = articles_fts.rowid
             JOIN laws l ON l.law_id = a.law_id
-            WHERE articles_fts MATCH ?
-            ORDER BY a.article_sort_base, a.article_sort_branch
+            WHERE a.provision_kind = 'main' AND articles_fts MATCH ?
+            ORDER BY
+                CASE l.law_name
+                    WHEN '建築基準法' THEN 0
+                    WHEN '建築基準法施行令' THEN 1
+                    ELSE 2
+                END,
+                a.article_sort_base,
+                a.article_sort_branch,
+                CASE a.provision_kind WHEN 'main' THEN 0 ELSE 1 END,
+                a.article_no
             LIMIT 100
         """
 
@@ -198,16 +231,16 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             like_rows = conn.execute(like_sql, (f"%{query}%", f"%{query}%")).fetchall()
             if like_rows:
                 return [
-                    (law_name, article_no, self._build_like_snippet(body, query))
-                    for law_name, article_no, body in like_rows
+                    (self._display_law_name(law_name, provision_kind), article_no, self._build_like_snippet(body, query))
+                    for law_name, provision_kind, article_no, body in like_rows
                 ], ""
 
             try:
-                return conn.execute(fts_sql, (query,)).fetchall(), ""
+                return self._format_result_rows(conn.execute(fts_sql, (query,)).fetchall()), ""
             except sqlite3.OperationalError:
                 # FTS5の構文エラー回避（例: 記号が多いクエリ）
                 quoted = f'"{query}"'
-                return conn.execute(fts_sql, (quoted,)).fetchall(), "クエリをフレーズ検索に変換"
+                return self._format_result_rows(conn.execute(fts_sql, (quoted,)).fetchall()), "クエリをフレーズ検索に変換"
 
     @staticmethod
     def _safe_snippet(snippet_text: str) -> str:
@@ -238,6 +271,17 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         if not text or not query or query not in text:
             return text
         return text.replace(query, f"<mark>{query}</mark>")
+
+    @classmethod
+    def _display_law_name(cls, law_name: str, provision_kind: str) -> str:
+        return cls.LAW_DISPLAY_LABELS.get((law_name, provision_kind), law_name)
+
+    @classmethod
+    def _format_result_rows(cls, rows):
+        return [
+            (cls._display_law_name(law_name, provision_kind), article_no, body)
+            for law_name, provision_kind, article_no, body in rows
+        ]
 
     @classmethod
     def _filter_article_rows_by_body_keyword(cls, rows, body_query: str):

@@ -13,11 +13,11 @@ import sys
 
 sys.path.append(str(ROOT / "src"))
 
-from law_database import LawSource, init_db, upsert_law  # type: ignore
+from law_database import LawSource, init_db, iter_articles, upsert_law  # type: ignore
 from web_app import LawSearchHandler, build_server_url, open_browser  # type: ignore
 
 
-SAMPLE_XML = """
+SAMPLE_MAIN_XML = """
 <Root>
   <LawBody>
     <MainProvision>
@@ -45,6 +45,46 @@ SAMPLE_XML = """
           <ParagraphNum>1</ParagraphNum>
           <ParagraphSentence>
             <Sentence>防火設備と排煙に関する規定。</Sentence>
+          </ParagraphSentence>
+        </Paragraph>
+      </Article>
+      <Article>
+        <ArticleTitle>第6条</ArticleTitle>
+        <Paragraph>
+          <ParagraphNum>1</ParagraphNum>
+          <ParagraphSentence>
+            <Sentence>建築物の建築等に関する申請及び確認。</Sentence>
+          </ParagraphSentence>
+        </Paragraph>
+      </Article>
+    </MainProvision>
+    <SupplProvision AmendLawNum="令和六年法律第十号">
+      <SupplProvisionLabel>附則</SupplProvisionLabel>
+      <Article>
+        <ArticleTitle>第6条</ArticleTitle>
+        <Paragraph>
+          <ParagraphNum>1</ParagraphNum>
+          <ParagraphSentence>
+            <Sentence>罰則に関する経過措置。</Sentence>
+          </ParagraphSentence>
+        </Paragraph>
+      </Article>
+    </SupplProvision>
+  </LawBody>
+</Root>
+"""
+
+
+SAMPLE_ORDER_XML = """
+<Root>
+  <LawBody>
+    <MainProvision>
+      <Article>
+        <ArticleTitle>第6条</ArticleTitle>
+        <Paragraph>
+          <ParagraphNum>1</ParagraphNum>
+          <ParagraphSentence>
+            <Sentence>建築基準法施行令の第六条本文。</Sentence>
           </ParagraphSentence>
         </Paragraph>
       </Article>
@@ -80,33 +120,64 @@ class DatabaseAndWebTests(unittest.TestCase):
             time.sleep(0.05)
 
     def test_upsert_creates_and_updates_articles(self):
-        root = ET.fromstring(SAMPLE_XML)
-        source = LawSource("X001", "テスト法")
+        root = ET.fromstring(SAMPLE_MAIN_XML)
+        source = LawSource("X001", "建築基準法")
         conn = sqlite3.connect(":memory:")
         init_db(conn)
 
         inserted = upsert_law(conn, source, root)
-        self.assertEqual(inserted, 3)
+        self.assertEqual(inserted, 5)
 
         count = conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
         fts_count = conn.execute("SELECT COUNT(*) FROM articles_fts").fetchone()[0]
-        self.assertEqual(count, 3)
-        self.assertEqual(fts_count, 3)
+        self.assertEqual(count, 5)
+        self.assertEqual(fts_count, 5)
 
         # 同一データの再投入でも件数は増えない（upsert）
         inserted2 = upsert_law(conn, source, root)
-        self.assertEqual(inserted2, 3)
+        self.assertEqual(inserted2, 5)
         count2 = conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
-        self.assertEqual(count2, 3)
+        self.assertEqual(count2, 5)
+
+        rows = conn.execute(
+            """
+            SELECT article_no, provision_kind, amend_law_num
+            FROM articles
+            WHERE article_no = '第6条'
+            ORDER BY provision_kind
+            """
+        ).fetchall()
+        self.assertEqual(
+            rows,
+            [
+                ("第6条", "main", ""),
+                ("第6条", "suppl", "令和六年法律第十号"),
+            ],
+        )
+
+    def test_iter_articles_separates_main_and_suppl(self):
+        root = ET.fromstring(SAMPLE_MAIN_XML)
+        articles = list(iter_articles(root))
+        article_sixes = [(article.article_no, article.provision_kind, article.amend_law_num) for article in articles if article.article_no == "第6条"]
+        self.assertEqual(
+            article_sixes,
+            [
+                ("第6条", "main", ""),
+                ("第6条", "suppl", "令和六年法律第十号"),
+            ],
+        )
 
     def test_web_search_and_html_safety(self):
-        root = ET.fromstring(SAMPLE_XML)
-        source = LawSource("X001", "テスト法")
+        main_root = ET.fromstring(SAMPLE_MAIN_XML)
+        order_root = ET.fromstring(SAMPLE_ORDER_XML)
+        main_source = LawSource("X001", "建築基準法")
+        order_source = LawSource("X002", "建築基準法施行令")
 
         with tempfile.NamedTemporaryFile(suffix=".db") as tf:
             conn = sqlite3.connect(tf.name)
             init_db(conn)
-            upsert_law(conn, source, root)
+            upsert_law(conn, main_source, main_root)
+            upsert_law(conn, order_source, order_root)
             conn.commit()
             conn.close()
 
@@ -117,6 +188,7 @@ class DatabaseAndWebTests(unittest.TestCase):
             self.assertGreaterEqual(len(rows), 1)
             self.assertEqual(warning, "")
             self.assertEqual(rows[0][1], "第1条")
+            self.assertEqual(rows[0][0], "法")
 
             rows_number, warning_number = LawSearchHandler.search_article(handler, "1")
             self.assertGreaterEqual(len(rows_number), 1)
@@ -143,12 +215,28 @@ class DatabaseAndWebTests(unittest.TestCase):
             self.assertEqual([row[1] for row in rows_filtered], ["第2条の2"])
             self.assertEqual(warning_filtered, "")
             self.assertIn("<mark>煙</mark>", rows_filtered[0][2])
+            self.assertEqual(rows_filtered[0][0], "法")
+
+            rows_six, warning_six = LawSearchHandler.search_article(handler, "6")
+            self.assertEqual(warning_six, "")
+            self.assertEqual(
+                [(row[0], row[1]) for row in rows_six[:2]],
+                [("法", "第6条"), ("令", "第6条")],
+            )
+            self.assertIn("建築物の建築等に関する申請及び確認。", rows_six[0][2])
+            self.assertIn("建築基準法施行令の第六条本文。", rows_six[1][2])
+            self.assertNotIn("法・附則", [row[0] for row in rows_six])
 
             # 日本語の部分一致でもヒットする
             rows_partial, warning_partial = LawSearchHandler.search_body(handler, "耐火")
             self.assertGreaterEqual(len(rows_partial), 1)
             self.assertEqual(warning_partial, "")
             self.assertIn("<mark>耐火</mark>", rows_partial[0][2])
+            self.assertEqual(rows_partial[0][0], "法")
+
+            rows_suppl_only, warning_suppl_only = LawSearchHandler.search_body(handler, "罰則")
+            self.assertEqual(rows_suppl_only, [])
+            self.assertEqual(warning_suppl_only, "")
 
             rows_legacy, warning_legacy = LawSearchHandler.search(handler, "耐火")
             self.assertGreaterEqual(len(rows_legacy), 1)
@@ -187,6 +275,13 @@ class DatabaseAndWebTests(unittest.TestCase):
             LawSearchHandler._build_meta([], "クエリをフレーズ検索に変換"),
             "0件ヒット（クエリをフレーズ検索に変換）",
         )
+
+    def test_display_law_name_maps_main_and_suppl(self):
+        self.assertEqual(LawSearchHandler._display_law_name("建築基準法", "main"), "法")
+        self.assertEqual(LawSearchHandler._display_law_name("建築基準法", "suppl"), "法・附則")
+        self.assertEqual(LawSearchHandler._display_law_name("建築基準法施行令", "main"), "令")
+        self.assertEqual(LawSearchHandler._display_law_name("建築基準法施行令", "suppl"), "令・附則")
+        self.assertEqual(LawSearchHandler._display_law_name("その他", "main"), "その他")
 
     def test_filter_article_rows_by_body_keyword_highlights_matches(self):
         rows = [

@@ -11,6 +11,15 @@ class LawSource:
     law_name: str
 
 
+@dataclass(frozen=True)
+class ArticleRecord:
+    article_no: str
+    body: str
+    provision_kind: str
+    provision_context: str
+    amend_law_num: str = ""
+
+
 def _to_text(value: str | None) -> str:
     return (value or "").strip()
 
@@ -26,23 +35,48 @@ def _article_sort_key(article_no: str) -> tuple[int, int]:
     return (numbers[0], numbers[1])
 
 
+def _article_body(article: ET.Element) -> str:
+    body = "".join(article.itertext())
+    return "\n".join(line.strip() for line in body.splitlines() if line.strip())
+
+
 def iter_articles(root: ET.Element):
-    """APIレスポンスからArticle要素を走査して (article_no, body) を返す。"""
-    for article in root.findall(".//{*}Article"):
-        article_no = _to_text(article.findtext(".//{*}ArticleTitle"))
-        if not article_no:
-            continue
-        body = "".join(article.itertext())
-        body = "\n".join(line.strip() for line in body.splitlines() if line.strip())
-        if not body:
-            continue
-        yield article_no, body
+    """APIレスポンスから本則・附則を区別して Article を走査する。"""
+    main_provision = root.find(".//{*}MainProvision")
+    if main_provision is not None:
+        for article in main_provision.findall(".//{*}Article"):
+            article_no = _to_text(article.findtext(".//{*}ArticleTitle"))
+            if not article_no:
+                continue
+            body = _article_body(article)
+            if not body:
+                continue
+            yield ArticleRecord(article_no, body, "main", "main")
+
+    for suppl_index, suppl in enumerate(root.findall(".//{*}SupplProvision"), start=1):
+        amend_law_num = _to_text(suppl.attrib.get("AmendLawNum"))
+        suppl_label = _to_text(suppl.findtext("./{*}SupplProvisionLabel")) or "附則"
+        provision_context = amend_law_num or f"{suppl_label}#{suppl_index}"
+        for article in suppl.findall(".//{*}Article"):
+            article_no = _to_text(article.findtext(".//{*}ArticleTitle"))
+            if not article_no:
+                continue
+            body = _article_body(article)
+            if not body:
+                continue
+            yield ArticleRecord(article_no, body, "suppl", provision_context, amend_law_num)
 
 
 def init_db(conn: sqlite3.Connection):
     conn.executescript(
         """
         PRAGMA journal_mode=WAL;
+
+        DROP TRIGGER IF EXISTS articles_ai;
+        DROP TRIGGER IF EXISTS articles_ad;
+        DROP TRIGGER IF EXISTS articles_au;
+        DROP TABLE IF EXISTS articles_fts;
+        DROP TABLE IF EXISTS articles;
 
         CREATE TABLE IF NOT EXISTS laws (
             law_id TEXT PRIMARY KEY,
@@ -54,11 +88,14 @@ def init_db(conn: sqlite3.Connection):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             law_id TEXT NOT NULL,
             article_no TEXT NOT NULL,
+            provision_kind TEXT NOT NULL,
+            provision_context TEXT NOT NULL,
+            amend_law_num TEXT NOT NULL DEFAULT '',
             body TEXT NOT NULL,
             article_sort_base INTEGER NOT NULL,
             article_sort_branch INTEGER NOT NULL,
             updated_at TEXT NOT NULL,
-            UNIQUE(law_id, article_no),
+            UNIQUE(law_id, article_no, provision_kind, provision_context),
             FOREIGN KEY(law_id) REFERENCES laws(law_id)
         );
 
@@ -104,19 +141,33 @@ def upsert_law(conn: sqlite3.Connection, source: LawSource, root: ET.Element) ->
     )
 
     inserted = 0
-    for article_no, body in iter_articles(root):
-        base, branch = _article_sort_key(article_no)
+    for article in iter_articles(root):
+        base, branch = _article_sort_key(article.article_no)
         conn.execute(
             """
-            INSERT INTO articles(law_id, article_no, body, article_sort_base, article_sort_branch, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(law_id, article_no) DO UPDATE SET
+            INSERT INTO articles(
+                law_id, article_no, provision_kind, provision_context, amend_law_num,
+                body, article_sort_base, article_sort_branch, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(law_id, article_no, provision_kind, provision_context) DO UPDATE SET
+                amend_law_num=excluded.amend_law_num,
                 body=excluded.body,
                 article_sort_base=excluded.article_sort_base,
                 article_sort_branch=excluded.article_sort_branch,
                 updated_at=excluded.updated_at
             """,
-            (source.law_id, article_no, body, base, branch, now),
+            (
+                source.law_id,
+                article.article_no,
+                article.provision_kind,
+                article.provision_context,
+                article.amend_law_num,
+                article.body,
+                base,
+                branch,
+                now,
+            ),
         )
         inserted += 1
 
