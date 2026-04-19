@@ -17,7 +17,7 @@ sys.path.append(str(ROOT / "src"))
 
 from law_database import LawSource, init_db, iter_articles, upsert_law  # type: ignore
 import laws_api  # type: ignore
-from web_app import LawSearchHandler, build_server_url, open_browser  # type: ignore
+from web_app import PAGE_TEMPLATE, LawSearchHandler, build_server_url, open_browser  # type: ignore
 
 
 SAMPLE_MAIN_XML = """
@@ -295,6 +295,19 @@ class DatabaseAndWebTests(unittest.TestCase):
             LawSearchHandler._build_meta([], "クエリをフレーズ検索に変換"),
             "0件ヒット（クエリをフレーズ検索に変換）",
         )
+
+    def test_page_template_supports_realtime_search_script(self):
+        html_doc = PAGE_TEMPLATE.format(
+            article_query="第1条",
+            body_query="耐火",
+            meta="1件ヒット",
+            table="<div>ok</div>",
+        )
+        self.assertIn('document.addEventListener("DOMContentLoaded"', html_doc)
+        self.assertIn("compositionstart", html_doc)
+        self.assertIn("compositionend", html_doc)
+        self.assertIn("bodyValue.length < 2", html_doc)
+        self.assertIn("AUTO_SUBMIT_DELAY_MS = 700", html_doc)
 
     def test_display_law_name_maps_main_and_suppl(self):
         self.assertEqual(LawSearchHandler._display_law_name("建築基準法", "main"), "法")

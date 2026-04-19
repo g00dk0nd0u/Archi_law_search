@@ -164,6 +164,90 @@ PAGE_TEMPLATE = """<!doctype html>
   </form>
   <p class=\"meta\"><strong>{meta}</strong></p>
   {table}
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {{
+      const form = document.querySelector(".search-form");
+      const articleInput = document.getElementById("article_q");
+      const bodyInput = document.getElementById("body_q");
+      if (!form || !articleInput || !bodyInput) {{
+        return;
+      }}
+
+      const AUTO_SUBMIT_DELAY_MS = 700;
+      let timerId = null;
+      let isComposing = false;
+      let isSubmitting = false;
+
+      const clearScheduledSubmit = function () {{
+        if (timerId !== null) {{
+          clearTimeout(timerId);
+          timerId = null;
+        }}
+      }};
+
+      const shouldAutoSubmit = function () {{
+        const articleValue = articleInput.value.trim();
+        const bodyValue = bodyInput.value.trim();
+        if (isComposing) {{
+          return false;
+        }}
+        if (!articleValue && !bodyValue) {{
+          return false;
+        }}
+        if (!articleValue && bodyValue.length < 2) {{
+          return false;
+        }}
+        return true;
+      }};
+
+      const submitForm = function () {{
+        if (isSubmitting) {{
+          return;
+        }}
+        isSubmitting = true;
+        clearScheduledSubmit();
+        if (typeof form.requestSubmit === "function") {{
+          form.requestSubmit();
+          return;
+        }}
+        form.submit();
+      }};
+
+      const scheduleSubmit = function () {{
+        clearScheduledSubmit();
+        if (!shouldAutoSubmit()) {{
+          return;
+        }}
+        timerId = window.setTimeout(function () {{
+          if (!shouldAutoSubmit()) {{
+            return;
+          }}
+          submitForm();
+        }}, AUTO_SUBMIT_DELAY_MS);
+      }};
+
+      const handleCompositionStart = function () {{
+        isComposing = true;
+        clearScheduledSubmit();
+      }};
+
+      const handleCompositionEnd = function () {{
+        isComposing = false;
+        scheduleSubmit();
+      }};
+
+      articleInput.addEventListener("input", scheduleSubmit);
+      bodyInput.addEventListener("input", scheduleSubmit);
+      articleInput.addEventListener("compositionstart", handleCompositionStart);
+      bodyInput.addEventListener("compositionstart", handleCompositionStart);
+      articleInput.addEventListener("compositionend", handleCompositionEnd);
+      bodyInput.addEventListener("compositionend", handleCompositionEnd);
+      form.addEventListener("submit", function () {{
+        isSubmitting = true;
+        clearScheduledSubmit();
+      }});
+    }});
+  </script>
 </body>
 </html>
 """
