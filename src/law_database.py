@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 import re
+from typing import Optional, Set, Tuple, Union
 
 if __package__ in (None, ""):
     from number_text_utils import normalize_num, normalize_separators
@@ -28,11 +29,11 @@ class ArticleRecord:
     amend_law_num: str = ""
 
 
-def _to_text(value: str | None) -> str:
+def _to_text(value: Optional[str]) -> str:
     return (value or "").strip()
 
 
-def _article_sort_key(article_no: str) -> tuple[int, int]:
+def _article_sort_key(article_no: str) -> Tuple[int, int]:
     # 例: 第111条 -> (111, 0), 第111条の2 -> (111, 2)
     normalized = normalize_num(normalize_separators(article_no))
     numbers = [int(value) for value in re.findall(r"\d+", normalized)]
@@ -75,122 +76,124 @@ def iter_articles(root: ET.Element):
             yield ArticleRecord(article_no, body, "suppl", provision_context, amend_law_num)
 
 
+BASE_SCHEMA_SQL = """
+    PRAGMA journal_mode=WAL;
+
+    CREATE TABLE IF NOT EXISTS laws (
+        law_id TEXT PRIMARY KEY,
+        law_name TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS articles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        law_id TEXT NOT NULL,
+        article_no TEXT NOT NULL,
+        provision_kind TEXT NOT NULL,
+        provision_context TEXT NOT NULL,
+        amend_law_num TEXT NOT NULL DEFAULT '',
+        body TEXT NOT NULL,
+        article_sort_base INTEGER NOT NULL,
+        article_sort_branch INTEGER NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(law_id, article_no, provision_kind, provision_context),
+        FOREIGN KEY(law_id) REFERENCES laws(law_id)
+    );
+"""
+
+DROP_FTS_SQL = """
+    DROP TRIGGER IF EXISTS articles_ai;
+    DROP TRIGGER IF EXISTS articles_ad;
+    DROP TRIGGER IF EXISTS articles_au;
+    DROP TABLE IF EXISTS articles_fts;
+"""
+
+FTS_SCHEMA_SQL = """
+    CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(
+        article_no,
+        body,
+        law_id UNINDEXED,
+        content='articles',
+        content_rowid='id'
+    );
+
+    CREATE TRIGGER IF NOT EXISTS articles_ai AFTER INSERT ON articles BEGIN
+        INSERT INTO articles_fts(rowid, article_no, body, law_id)
+        VALUES (new.id, new.article_no, new.body, new.law_id);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS articles_ad AFTER DELETE ON articles BEGIN
+        INSERT INTO articles_fts(articles_fts, rowid, article_no, body, law_id)
+        VALUES('delete', old.id, old.article_no, old.body, old.law_id);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS articles_au AFTER UPDATE ON articles BEGIN
+        INSERT INTO articles_fts(articles_fts, rowid, article_no, body, law_id)
+        VALUES('delete', old.id, old.article_no, old.body, old.law_id);
+        INSERT INTO articles_fts(rowid, article_no, body, law_id)
+        VALUES (new.id, new.article_no, new.body, new.law_id);
+    END;
+"""
+
+
+def supports_fts5(conn: sqlite3.Connection) -> bool:
+    try:
+        conn.execute("CREATE VIRTUAL TABLE temp.fts5_probe USING fts5(content)")
+        return True
+    except sqlite3.OperationalError:
+        return False
+    finally:
+        try:
+            conn.execute("DROP TABLE IF EXISTS temp.fts5_probe")
+        except sqlite3.OperationalError:
+            pass
+
+
+def has_fts5_table(conn: sqlite3.Connection) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'articles_fts' LIMIT 1"
+    ).fetchone()
+    return row is not None
+
+
+def fts5_enabled(conn: sqlite3.Connection) -> bool:
+    return supports_fts5(conn) and has_fts5_table(conn)
+
+
+def _drop_fts_objects(conn: sqlite3.Connection) -> None:
+    try:
+        conn.executescript(DROP_FTS_SQL)
+    except sqlite3.OperationalError:
+        pass
+
+
+def _ensure_fts_objects(conn: sqlite3.Connection, rebuild_fts: bool) -> None:
+    if not supports_fts5(conn):
+        _drop_fts_objects(conn)
+        return
+
+    conn.executescript(FTS_SCHEMA_SQL)
+    if rebuild_fts and has_fts5_table(conn):
+        conn.execute("INSERT INTO articles_fts(articles_fts) VALUES ('rebuild')")
+
+
 def init_db(conn: sqlite3.Connection):
     conn.executescript(
         """
         PRAGMA journal_mode=WAL;
 
-        DROP TRIGGER IF EXISTS articles_ai;
-        DROP TRIGGER IF EXISTS articles_ad;
-        DROP TRIGGER IF EXISTS articles_au;
-        DROP TABLE IF EXISTS articles_fts;
         DROP TABLE IF EXISTS articles;
         DROP TABLE IF EXISTS laws;
-
-        CREATE TABLE IF NOT EXISTS laws (
-            law_id TEXT PRIMARY KEY,
-            law_name TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS articles (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            law_id TEXT NOT NULL,
-            article_no TEXT NOT NULL,
-            provision_kind TEXT NOT NULL,
-            provision_context TEXT NOT NULL,
-            amend_law_num TEXT NOT NULL DEFAULT '',
-            body TEXT NOT NULL,
-            article_sort_base INTEGER NOT NULL,
-            article_sort_branch INTEGER NOT NULL,
-            updated_at TEXT NOT NULL,
-            UNIQUE(law_id, article_no, provision_kind, provision_context),
-            FOREIGN KEY(law_id) REFERENCES laws(law_id)
-        );
-
-        CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(
-            article_no,
-            body,
-            law_id UNINDEXED,
-            content='articles',
-            content_rowid='id'
-        );
-
-        CREATE TRIGGER IF NOT EXISTS articles_ai AFTER INSERT ON articles BEGIN
-            INSERT INTO articles_fts(rowid, article_no, body, law_id)
-            VALUES (new.id, new.article_no, new.body, new.law_id);
-        END;
-
-        CREATE TRIGGER IF NOT EXISTS articles_ad AFTER DELETE ON articles BEGIN
-            INSERT INTO articles_fts(articles_fts, rowid, article_no, body, law_id)
-            VALUES('delete', old.id, old.article_no, old.body, old.law_id);
-        END;
-
-        CREATE TRIGGER IF NOT EXISTS articles_au AFTER UPDATE ON articles BEGIN
-            INSERT INTO articles_fts(articles_fts, rowid, article_no, body, law_id)
-            VALUES('delete', old.id, old.article_no, old.body, old.law_id);
-            INSERT INTO articles_fts(rowid, article_no, body, law_id)
-            VALUES (new.id, new.article_no, new.body, new.law_id);
-        END;
         """
     )
-    ensure_db(conn, rebuild_fts=True)
+    _drop_fts_objects(conn)
+    conn.executescript(BASE_SCHEMA_SQL)
+    _ensure_fts_objects(conn, rebuild_fts=True)
 
 
 def ensure_db(conn: sqlite3.Connection, rebuild_fts: bool = True):
-    conn.executescript(
-        """
-        PRAGMA journal_mode=WAL;
-
-        CREATE TABLE IF NOT EXISTS laws (
-            law_id TEXT PRIMARY KEY,
-            law_name TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS articles (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            law_id TEXT NOT NULL,
-            article_no TEXT NOT NULL,
-            provision_kind TEXT NOT NULL,
-            provision_context TEXT NOT NULL,
-            amend_law_num TEXT NOT NULL DEFAULT '',
-            body TEXT NOT NULL,
-            article_sort_base INTEGER NOT NULL,
-            article_sort_branch INTEGER NOT NULL,
-            updated_at TEXT NOT NULL,
-            UNIQUE(law_id, article_no, provision_kind, provision_context),
-            FOREIGN KEY(law_id) REFERENCES laws(law_id)
-        );
-
-        CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(
-            article_no,
-            body,
-            law_id UNINDEXED,
-            content='articles',
-            content_rowid='id'
-        );
-
-        CREATE TRIGGER IF NOT EXISTS articles_ai AFTER INSERT ON articles BEGIN
-            INSERT INTO articles_fts(rowid, article_no, body, law_id)
-            VALUES (new.id, new.article_no, new.body, new.law_id);
-        END;
-
-        CREATE TRIGGER IF NOT EXISTS articles_ad AFTER DELETE ON articles BEGIN
-            INSERT INTO articles_fts(articles_fts, rowid, article_no, body, law_id)
-            VALUES('delete', old.id, old.article_no, old.body, old.law_id);
-        END;
-
-        CREATE TRIGGER IF NOT EXISTS articles_au AFTER UPDATE ON articles BEGIN
-            INSERT INTO articles_fts(articles_fts, rowid, article_no, body, law_id)
-            VALUES('delete', old.id, old.article_no, old.body, old.law_id);
-            INSERT INTO articles_fts(rowid, article_no, body, law_id)
-            VALUES (new.id, new.article_no, new.body, new.law_id);
-        END;
-        """
-    )
-    if rebuild_fts:
-        conn.execute("INSERT INTO articles_fts(articles_fts) VALUES ('rebuild')")
+    conn.executescript(BASE_SCHEMA_SQL)
+    _ensure_fts_objects(conn, rebuild_fts=rebuild_fts)
 
 
 def upsert_law(conn: sqlite3.Connection, source: LawSource, root: ET.Element) -> int:
@@ -247,7 +250,7 @@ def law_exists(conn: sqlite3.Connection, law_id: str) -> bool:
     return row is not None
 
 
-def list_installed_law_ids(conn: sqlite3.Connection) -> set[str]:
+def list_installed_law_ids(conn: sqlite3.Connection) -> Set[str]:
     ensure_db(conn, rebuild_fts=False)
     return {row[0] for row in conn.execute("SELECT law_id FROM laws").fetchall()}
 
@@ -301,5 +304,5 @@ def replace_law(conn: sqlite3.Connection, source: LawSource, root: ET.Element) -
     return len(articles)
 
 
-def connect_db(db_path: str | Path) -> sqlite3.Connection:
+def connect_db(db_path: Union[str, Path]) -> sqlite3.Connection:
     return sqlite3.connect(str(db_path))

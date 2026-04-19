@@ -2,6 +2,7 @@
 
 import re
 import xml.etree.ElementTree as ET
+from typing import List, Optional, Pattern, Set, Tuple
 
 try:
     from .number_text_utils import int_to_kanji, normalize_num, normalize_separators
@@ -13,12 +14,12 @@ except ImportError:  # script fallback
     from text_utils import clean_text_display
 
 
-def extract_query_numbers(query: str) -> list[str]:
+def extract_query_numbers(query: str) -> List[str]:
     """Extract base article numbers from the query, tolerant of prefixes/suffixes."""
     q = normalize_separators(normalize_num(query))
     q = re.sub(r"[法第条]", "", q)
     q = q.replace("の", "-")
-    numbers: list[str] = []
+    numbers: List[str] = []
     for piece in re.split(r"[^0-9-]+", q):
         if not piece:
             continue
@@ -36,7 +37,7 @@ def extract_query_numbers(query: str) -> list[str]:
     return deduped
 
 
-def parse_number_token(token: str) -> tuple[str | None, str | None]:
+def parse_number_token(token: str) -> Tuple[Optional[str], Optional[str]]:
     """Parse a single token and return (base, branch) if it contains a number."""
     t = normalize_separators(normalize_num(token))
     stripped = re.sub(r"[法第条]", "", t)
@@ -47,9 +48,9 @@ def parse_number_token(token: str) -> tuple[str | None, str | None]:
     return m.group(1), m.group(2)
 
 
-def generate_number_terms(base: str, branch_hint: str | None = None) -> set[str]:
+def generate_number_terms(base: str, branch_hint: Optional[str] = None) -> Set[str]:
     """Generate related search terms for a given article number."""
-    terms: set[str] = set()
+    terms: Set[str] = set()
     try:
         n_int = int(base)
     except ValueError:
@@ -73,7 +74,7 @@ def generate_number_terms(base: str, branch_hint: str | None = None) -> set[str]
     }
     terms.update(base_forms)
 
-    branch_candidates: list[str] = []
+    branch_candidates: List[str] = []
     if branch_hint:
         branch_candidates.append(branch_hint)
     branch_candidates.extend([str(i) for i in range(1, 11)])
@@ -102,13 +103,13 @@ def generate_number_terms(base: str, branch_hint: str | None = None) -> set[str]
     return {x for x in expanded if x}
 
 
-def build_term_groups(query: str, article_mode: bool = False) -> list[set[str]]:
+def build_term_groups(query: str, article_mode: bool = False) -> List[Set[str]]:
     """Split query into tokens and expand each into OR groups."""
     tokens = [tok for tok in re.split(r"\s+", query) if tok]
-    groups: list[set[str]] = []
+    groups: List[Set[str]] = []
     for tok in tokens:
         base, branch = parse_number_token(tok)
-        group: set[str] = set()
+        group: Set[str] = set()
         tok_norm = normalize_separators(normalize_num(tok))
         if base and article_mode:
             for term in generate_number_terms(base, branch):
@@ -124,7 +125,7 @@ def build_term_groups(query: str, article_mode: bool = False) -> list[set[str]]:
     return groups
 
 
-def matches_group(raw_text: str, norm_text: str, terms: set[str]) -> bool:
+def matches_group(raw_text: str, norm_text: str, terms: Set[str]) -> bool:
     """Check whether any term in the group matches raw or normalized text."""
     for term in terms:
         if not term:
@@ -141,7 +142,7 @@ def is_branch_mode(query: str) -> bool:
     return ("の" in query) or any(ch in query for ch in ("-", "ー", "－", "―", "‐", "‑", "–", "—", "〜", "～"))
 
 
-def build_branch_patterns(base: str, branch: str) -> list[re.Pattern]:
+def build_branch_patterns(base: str, branch: str) -> List[Pattern]:
     """Generate regex patterns that require 条の/条- style with exact branch (fullmatch only)."""
     try:
         base_k = int_to_kanji(int(base))
@@ -158,7 +159,7 @@ def build_branch_patterns(base: str, branch: str) -> list[re.Pattern]:
         f"{base_k}",
     ]
     branch_variants = [branch, branch_k]
-    patterns: list[re.Pattern] = []
+    patterns: List[Pattern] = []
     sep = r"(?:の|ー|-)"
     for pre in prefixes:
         for b in base_variants:
@@ -168,13 +169,13 @@ def build_branch_patterns(base: str, branch: str) -> list[re.Pattern]:
     return patterns
 
 
-def build_branch_patterns_any(base: str) -> list[re.Pattern]:
+def build_branch_patterns_any(base: str) -> List[Pattern]:
     """Regex patterns for any branch number of given base (fullmatch)."""
     try:
         base_k = int_to_kanji(int(base))
     except Exception:
         base_k = base
-    patterns: list[re.Pattern] = []
+    patterns: List[Pattern] = []
     sep = r"(?:の|ー|-)"
     branch_part = r"(\d+|[一二三四五六七八九十百千〇零]+)"
     for b in (base, base_k):
@@ -183,13 +184,13 @@ def build_branch_patterns_any(base: str) -> list[re.Pattern]:
     return patterns
 
 
-def build_branch_search_patterns_any(base: str) -> list[re.Pattern]:
+def build_branch_search_patterns_any(base: str) -> List[Pattern]:
     """Regex patterns (search) for any branch number of given base (non-anchored)."""
     try:
         base_k = int_to_kanji(int(base))
     except Exception:
         base_k = base
-    patterns: list[re.Pattern] = []
+    patterns: List[Pattern] = []
     sep = r"(?:の|ー|-)"
     branch_part = r"(\d+|[一二三四五六七八九十百千〇零]+)"
     for b in (base, base_k):
@@ -208,7 +209,7 @@ def build_query_profile(query: str) -> dict:
 
     base = branch = None
     branch_any = False
-    number_bases: list[str] = []
+    number_bases: List[str] = []
     m_branch = re.search(r"第?(\d+)条(?:の|ー|-)(\d+)$", norm)
     if m_branch:
         base, branch = m_branch.group(1), m_branch.group(2)
@@ -231,10 +232,10 @@ def build_query_profile(query: str) -> dict:
 
     title_terms = set()
     text_terms = set()
-    text_patterns: list[re.Pattern] = []
+    text_patterns: List[Pattern] = []
     highlight_terms = set()
 
-    def add_term_sets(terms: set[str]):
+    def add_term_sets(terms: Set[str]):
         title_terms.update(terms)
         text_terms.update(terms)
         highlight_terms.update(terms)
@@ -322,7 +323,7 @@ def build_query_profile(query: str) -> dict:
     }
 
 
-def build_formal_patterns(base: str, branch: str | None):
+def build_formal_patterns(base: str, branch: Optional[str]):
     """Return (title_patterns, text_patterns) for formal article matching."""
     try:
         base_k = int_to_kanji(int(base))
@@ -355,7 +356,7 @@ def build_formal_patterns(base: str, branch: str | None):
     return title_patterns, text_patterns
 
 
-def matches_branch_patterns(text: str, patterns: list[re.Pattern]) -> bool:
+def matches_branch_patterns(text: str, patterns: List[Pattern]) -> bool:
     return any(p.search(text) for p in patterns)
 
 
@@ -388,7 +389,7 @@ def build_article_context_map(root: ET.Element):
     return context
 
 
-def get_article_base_number(title: str) -> str | None:
+def get_article_base_number(title: str) -> Optional[str]:
     """ArticleTitle から条の基番号（数字）を抽出する。"""
     t_norm = normalize_num(title)
     m = re.search(r"第(\d+)条", t_norm)

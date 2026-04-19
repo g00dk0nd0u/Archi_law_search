@@ -11,15 +11,16 @@ import time
 import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import List, Optional, Set, Tuple
 from urllib.parse import parse_qs, urlencode, urlparse
 
 if __package__ in (None, ""):
-    from law_database import LawSource, connect_db, delete_law, ensure_db, law_exists, list_installed_law_ids, replace_law
+    from law_database import LawSource, connect_db, delete_law, ensure_db, fts5_enabled, law_exists, list_installed_law_ids, replace_law
     from law_registry import LAW_BY_ID, LAW_REGISTRY
     from laws_api import fetch_law_xml
     from number_text_utils import int_to_kanji, normalize_num, normalize_separators
 else:
-    from .law_database import LawSource, connect_db, delete_law, ensure_db, law_exists, list_installed_law_ids, replace_law
+    from .law_database import LawSource, connect_db, delete_law, ensure_db, fts5_enabled, law_exists, list_installed_law_ids, replace_law
     from .law_registry import LAW_BY_ID, LAW_REGISTRY
     from .laws_api import fetch_law_xml
     from .number_text_utils import int_to_kanji, normalize_num, normalize_separators
@@ -1097,7 +1098,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         self.send_header("Location", f"/settings?{query}")
         self.end_headers()
 
-    def _connect_existing_db(self):
+    def _connect_existing_db(self) -> Optional[sqlite3.Connection]:
         db_path = Path(self.db_path)
         if not db_path.exists():
             return None
@@ -1120,7 +1121,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         return f"<div class='{css_class}'>{html.escape(message)}</div>"
 
     @staticmethod
-    def _parse_search_inputs(query_string: str) -> tuple[str, str]:
+    def _parse_search_inputs(query_string: str) -> Tuple[str, str]:
         params = parse_qs(query_string)
         article_query = params.get("article_q", [""])[0].strip()
         body_query = params.get("body_q", [""])[0].strip()
@@ -1130,7 +1131,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         return article_query, body_query
 
     @staticmethod
-    def _select_search_query(article_query: str, body_query: str) -> tuple[str, str]:
+    def _select_search_query(article_query: str, body_query: str) -> Tuple[str, str]:
         if article_query:
             return "article", article_query
         if body_query:
@@ -1144,7 +1145,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             meta = f"{meta}（{warning}）"
         return meta
 
-    def _connect_search_db(self):
+    def _connect_search_db(self) -> Tuple[Optional[sqlite3.Connection], str]:
         db_path = Path(self.db_path)
         if not db_path.exists():
             return None, "DBファイルが見つかりません"
@@ -1257,11 +1258,18 @@ class LawSearchHandler(BaseHTTPRequestHandler):
                     for law_name, provision_kind, article_no, body in like_rows
                 ], ""
 
+            if not fts5_enabled(conn):
+                return [], ""
+
             try:
                 return self._format_result_rows(conn.execute(fts_sql, (query,)).fetchall(), body_index=3, full_body_index=4), ""
             except sqlite3.OperationalError:
                 quoted = f'"{query}"'
-                return self._format_result_rows(conn.execute(fts_sql, (quoted,)).fetchall(), body_index=3, full_body_index=4), "クエリをフレーズ検索に変換"
+                try:
+                    rows = conn.execute(fts_sql, (quoted,)).fetchall()
+                except sqlite3.OperationalError:
+                    return [], ""
+                return self._format_result_rows(rows, body_index=3, full_body_index=4), "クエリをフレーズ検索に変換"
 
     @staticmethod
     def _safe_snippet(snippet_text: str) -> str:
@@ -1363,7 +1371,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         )
 
     @classmethod
-    def _format_result_rows(cls, rows, body_index: int = 3, full_body_index: int | None = None):
+    def _format_result_rows(cls, rows, body_index: int = 3, full_body_index: Optional[int] = None):
         return [
             cls._format_result_row(row, body_index=body_index, full_body_index=full_body_index)
             for row in rows
@@ -1380,7 +1388,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         return filtered_rows
 
     @classmethod
-    def _format_result_row(cls, row, body_index: int = 3, full_body_index: int | None = None):
+    def _format_result_row(cls, row, body_index: int = 3, full_body_index: Optional[int] = None):
         law_name, provision_kind, article_no = row[:3]
         body = row[body_index]
         full_body = body if full_body_index is None else row[full_body_index]
@@ -1391,9 +1399,9 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         return article_no[1:] if article_no.startswith("第") else article_no
 
     @staticmethod
-    def _article_query_variants(query: str) -> tuple[list[str], tuple[int | None, int | None]]:
-        variants: list[str] = []
-        seen: set[str] = set()
+    def _article_query_variants(query: str) -> Tuple[List[str], Tuple[Optional[int], Optional[int]]]:
+        variants: List[str] = []
+        seen: Set[str] = set()
 
         def add(value: str):
             value = value.strip()
@@ -1453,7 +1461,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         lines.append("</tbody></table>")
         return "\n".join(lines)
 
-    def render_settings_table(self, installed_ids: set[str]) -> str:
+    def render_settings_table(self, installed_ids: Set[str]) -> str:
         if not LAW_REGISTRY:
             return "<div class='empty'>表示できる法令がありません。</div>"
 

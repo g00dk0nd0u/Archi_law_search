@@ -2,6 +2,7 @@
 
 import json
 import xml.etree.ElementTree as ET
+from typing import Optional
 
 try:
     from .text_utils import get_text
@@ -11,7 +12,7 @@ except ImportError:  # script fallback
 INDENT = "\u3000\u3000"  # 全角スペース2つで項目の余白を保持
 
 
-def _extract_sentences(container: ET.Element | None):
+def _extract_sentences(container: Optional[ET.Element]):
     """ItemSentence 繧・ParagraphSentence 縺九ｉ Sentence/Column 繧帝・蛻励〒霑斐☆縲・"""
     if container is None:
         return {"sentences": [], "columns": []}

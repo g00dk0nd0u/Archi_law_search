@@ -20,15 +20,24 @@ from law_database import (  # type: ignore
     _article_sort_key,
     delete_law,
     ensure_db,
+    fts5_enabled,
+    has_fts5_table,
     init_db,
     iter_articles,
     list_installed_law_ids,
     replace_law,
+    supports_fts5,
     upsert_law,
 )
 from law_registry import DEFAULT_LAWS, LAW_REGISTRY  # type: ignore
 import laws_api  # type: ignore
 from web_app import SEARCH_PAGE_TEMPLATE, SETTINGS_PAGE_TEMPLATE, LawSearchHandler, build_server_url, open_browser  # type: ignore
+
+
+def _maybe_fts_count(conn):
+    if not has_fts5_table(conn):
+        return None
+    return conn.execute("SELECT COUNT(*) FROM articles_fts").fetchone()[0]
 
 
 SAMPLE_MAIN_XML = """
@@ -283,37 +292,84 @@ class DatabaseAndWebTests(unittest.TestCase):
         root = ET.fromstring(SAMPLE_MAIN_XML)
         source = LawSource("X001", "建築基準法")
         conn = sqlite3.connect(":memory:")
-        init_db(conn)
+        try:
+            init_db(conn)
 
-        inserted = upsert_law(conn, source, root)
-        self.assertEqual(inserted, 5)
+            inserted = upsert_law(conn, source, root)
+            self.assertEqual(inserted, 5)
 
-        count = conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
-        fts_count = conn.execute("SELECT COUNT(*) FROM articles_fts").fetchone()[0]
-        self.assertEqual(count, 5)
-        self.assertEqual(fts_count, 5)
+            count = conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
+            self.assertEqual(count, 5)
+            if supports_fts5(conn):
+                self.assertEqual(_maybe_fts_count(conn), 5)
+            else:
+                self.assertIsNone(_maybe_fts_count(conn))
 
-        # 同一データの再投入でも件数は増えない（upsert）
-        inserted2 = upsert_law(conn, source, root)
-        self.assertEqual(inserted2, 5)
-        count2 = conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
-        self.assertEqual(count2, 5)
+            # 同一データの再投入でも件数は増えない（upsert）
+            inserted2 = upsert_law(conn, source, root)
+            self.assertEqual(inserted2, 5)
+            count2 = conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
+            self.assertEqual(count2, 5)
 
-        rows = conn.execute(
-            """
-            SELECT article_no, provision_kind, amend_law_num
-            FROM articles
-            WHERE article_no = '第6条'
-            ORDER BY provision_kind
-            """
-        ).fetchall()
-        self.assertEqual(
-            rows,
-            [
-                ("第6条", "main", ""),
-                ("第6条", "suppl", "令和六年法律第十号"),
-            ],
-        )
+            rows = conn.execute(
+                """
+                SELECT article_no, provision_kind, amend_law_num
+                FROM articles
+                WHERE article_no = '第6条'
+                ORDER BY provision_kind
+                """
+            ).fetchall()
+            self.assertEqual(
+                rows,
+                [
+                    ("第6条", "main", ""),
+                    ("第6条", "suppl", "令和六年法律第十号"),
+                ],
+            )
+        finally:
+            conn.close()
+
+    def test_ensure_db_skips_fts_objects_when_fts5_is_unavailable(self):
+        conn = sqlite3.connect(":memory:")
+        try:
+            with mock.patch("law_database.supports_fts5", return_value=False):
+                ensure_db(conn)
+
+            self.assertFalse(has_fts5_table(conn))
+            trigger_names = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'articles_a%'"
+                ).fetchall()
+            }
+            self.assertEqual(trigger_names, set())
+        finally:
+            conn.close()
+
+    def test_search_body_falls_back_to_like_only_when_fts5_is_unavailable(self):
+        root = ET.fromstring(SAMPLE_MAIN_XML)
+        source = LawSource("X900", "建築基準法")
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as tf:
+            conn = sqlite3.connect(tf.name)
+            with mock.patch("law_database.supports_fts5", return_value=False):
+                ensure_db(conn)
+                upsert_law(conn, source, root)
+                conn.commit()
+            conn.close()
+
+            handler = object.__new__(LawSearchHandler)
+            handler.db_path = tf.name
+
+            with mock.patch("web_app.fts5_enabled", return_value=False):
+                rows, warning = LawSearchHandler.search_body(handler, "耐火")
+                rows_missing, warning_missing = LawSearchHandler.search_body(handler, "(")
+
+        self.assertEqual(warning, "")
+        self.assertEqual(len(rows), 1)
+        self.assertIn("<mark>耐火</mark>", rows[0][2])
+        self.assertEqual(rows_missing, [])
+        self.assertEqual(warning_missing, "")
 
     def test_iter_articles_separates_main_and_suppl(self):
         root = ET.fromstring(SAMPLE_MAIN_XML)
@@ -405,7 +461,15 @@ class DatabaseAndWebTests(unittest.TestCase):
             # 記号クエリで構文エラーが出てもフレーズ検索にフォールバック
             rows2, warning2 = LawSearchHandler.search_body(handler, "(")
             self.assertIsInstance(rows2, list)
-            self.assertEqual(warning2, "クエリをフレーズ検索に変換")
+            probe_conn = sqlite3.connect(":memory:")
+            try:
+                fts_supported = supports_fts5(probe_conn)
+            finally:
+                probe_conn.close()
+            if fts_supported:
+                self.assertEqual(warning2, "クエリをフレーズ検索に変換")
+            else:
+                self.assertEqual(warning2, "")
 
             # snippet中のHTMLはエスケープされる（markタグのみ許可）
             unsafe = "<script>alert(1)</script><mark>耐火</mark>"
@@ -463,35 +527,50 @@ class DatabaseAndWebTests(unittest.TestCase):
         source = LawSource("X100", "追加法令")
 
         conn = sqlite3.connect(":memory:")
-        ensure_db(conn)
+        try:
+            ensure_db(conn)
 
-        count = replace_law(conn, source, root)
-        self.assertEqual(count, 5)
-        self.assertEqual(list_installed_law_ids(conn), {"X100"})
-        self.assertEqual(conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0], 5)
-        self.assertEqual(conn.execute("SELECT COUNT(*) FROM articles_fts").fetchone()[0], 5)
+            count = replace_law(conn, source, root)
+            self.assertEqual(count, 5)
+            self.assertEqual(list_installed_law_ids(conn), {"X100"})
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0], 5)
+            if supports_fts5(conn):
+                self.assertEqual(_maybe_fts_count(conn), 5)
+            else:
+                self.assertIsNone(_maybe_fts_count(conn))
 
-        delete_law(conn, "X100")
-        self.assertEqual(list_installed_law_ids(conn), set())
-        self.assertEqual(conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0], 0)
-        self.assertEqual(conn.execute("SELECT COUNT(*) FROM articles_fts").fetchone()[0], 0)
+            delete_law(conn, "X100")
+            self.assertEqual(list_installed_law_ids(conn), set())
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0], 0)
+            if supports_fts5(conn):
+                self.assertEqual(_maybe_fts_count(conn), 0)
+            else:
+                self.assertIsNone(_maybe_fts_count(conn))
+        finally:
+            conn.close()
 
     def test_replace_law_refresh_removes_stale_articles(self):
         source = LawSource("X200", "更新法令")
         conn = sqlite3.connect(":memory:")
-        ensure_db(conn)
+        try:
+            ensure_db(conn)
 
-        replace_law(conn, source, ET.fromstring(SAMPLE_MAIN_XML))
-        replace_law(conn, source, ET.fromstring(SAMPLE_UPDATED_XML))
+            replace_law(conn, source, ET.fromstring(SAMPLE_MAIN_XML))
+            replace_law(conn, source, ET.fromstring(SAMPLE_UPDATED_XML))
 
-        rows = conn.execute(
-            "SELECT article_no, body FROM articles WHERE law_id = ? ORDER BY article_no",
-            ("X200",),
-        ).fetchall()
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0][0], "第1条")
-        self.assertIn("更新後の本文。", rows[0][1])
-        self.assertEqual(conn.execute("SELECT COUNT(*) FROM articles_fts").fetchone()[0], 1)
+            rows = conn.execute(
+                "SELECT article_no, body FROM articles WHERE law_id = ? ORDER BY article_no",
+                ("X200",),
+            ).fetchall()
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0][0], "第1条")
+            self.assertIn("更新後の本文。", rows[0][1])
+            if supports_fts5(conn):
+                self.assertEqual(_maybe_fts_count(conn), 1)
+            else:
+                self.assertIsNone(_maybe_fts_count(conn))
+        finally:
+            conn.close()
 
     def test_parse_search_inputs_prioritizes_article_and_legacy_q_as_body(self):
         article_q, body_q = LawSearchHandler._parse_search_inputs("q=%E8%80%90%E7%81%AB")
