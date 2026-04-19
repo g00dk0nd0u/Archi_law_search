@@ -26,18 +26,125 @@ PAGE_TEMPLATE = """<!doctype html>
   <meta charset=\"utf-8\" />
   <title>建築法規検索</title>
   <style>
-    body {{ font-family: sans-serif; margin: 1.5rem auto; max-width: 1080px; padding: 0 1rem; }}
-    input[type=text] {{ width: 26rem; max-width: 80vw; }}
-    .search-form {{ display: grid; gap: 0.75rem; align-items: end; }}
-    .search-row {{ display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; }}
-    .field {{ display: grid; gap: 0.25rem; }}
-    label {{ font-weight: 600; }}
-    table {{ border-collapse: collapse; width: 100%; margin-top: 1rem; }}
-    th, td {{ border: 1px solid #ddd; padding: 0.5rem; vertical-align: top; }}
-    th {{ background: #f5f5f5; text-align: left; }}
-    .law {{ white-space: nowrap; }}
-    .article {{ white-space: nowrap; }}
-    .body {{ white-space: pre-wrap; }}
+    *, *::before, *::after {{ box-sizing: border-box; }}
+    body {{
+      font-family: "Hiragino Sans", "Yu Gothic UI", sans-serif;
+      margin: 0;
+      padding: 1.5rem 1rem;
+      max-width: 1100px;
+      margin-inline: auto;
+      background: #f4f5f7;
+      color: #222;
+      font-size: 0.9375rem;
+    }}
+    h1 {{
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: #1a2e4a;
+      border-left: 4px solid #3b6ea5;
+      padding-left: 0.75rem;
+      margin: 0 0 1.25rem;
+    }}
+    .search-form {{
+      background: #fff;
+      border: 1px solid #dde1e7;
+      border-radius: 8px;
+      padding: 0.95rem 1.1rem;
+      margin-bottom: 0.6rem;
+    }}
+    .search-row {{ display: flex; flex-wrap: wrap; gap: 0.85rem; align-items: flex-end; }}
+    .field {{ display: grid; gap: 0.3rem; }}
+    label {{ font-weight: 600; font-size: 0.8125rem; color: #444; }}
+    input[type=text] {{
+      width: 18rem;
+      max-width: 78vw;
+      padding: 0.45rem 0.65rem;
+      border: 1px solid #bfc5ce;
+      border-radius: 5px;
+      font-size: 0.9375rem;
+      color: #222;
+      background: #fafafa;
+      transition: border-color 0.15s;
+    }}
+    input[type=text]:focus {{
+      outline: none;
+      border-color: #3b6ea5;
+      background: #fff;
+      box-shadow: 0 0 0 3px rgba(59, 110, 165, 0.15);
+    }}
+    #article_q {{ width: 14rem; }}
+    #body_q {{ width: 30rem; max-width: 80vw; }}
+    button[type=submit] {{
+      padding: 0.45rem 1.25rem;
+      background: #3b6ea5;
+      color: #fff;
+      border: none;
+      border-radius: 5px;
+      font-size: 0.9375rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+      align-self: flex-end;
+    }}
+    button[type=submit]:hover {{ background: #2d5585; }}
+    .meta {{
+      font-size: 0.8125rem;
+      color: #4e5968;
+      margin: 0 0 0.7rem;
+      background: #f7f9fc;
+      border: 1px solid #e2e7ef;
+      border-radius: 6px;
+      padding: 0.45rem 0.7rem;
+    }}
+    .meta strong {{
+      font-weight: 600;
+      color: #1f3656;
+    }}
+    table {{
+      border-collapse: collapse;
+      width: 100%;
+      margin-top: 0.35rem;
+      background: #fff;
+      border: 1px solid #dde1e7;
+      border-radius: 8px;
+      overflow: hidden;
+      font-size: 0.875rem;
+    }}
+    thead th {{
+      background: #1a2e4a;
+      color: #fff;
+      border-top: none;
+      padding: 0.6rem 0.75rem;
+      text-align: left;
+      font-size: 0.8125rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }}
+    td {{
+      border-top: 1px solid #eaecef;
+      padding: 0.72rem 0.85rem;
+      vertical-align: top;
+    }}
+    tbody tr:nth-child(even) {{ background: #f8f9fb; }}
+    tbody tr:hover {{ background: #eef3fb; }}
+    .law {{ white-space: nowrap; color: #3b6ea5; font-weight: 600; width: 3.5rem; }}
+    .article {{ white-space: nowrap; width: 6rem; font-variant-numeric: tabular-nums; }}
+    .body {{ white-space: pre-wrap; line-height: 1.72; font-size: 0.9rem; }}
+    .empty {{
+      margin-top: 0.35rem;
+      background: #f9fbfd;
+      border: 1px solid #e2e7ef;
+      border-radius: 8px;
+      padding: 0.75rem 0.9rem;
+      color: #505c6d;
+      font-size: 0.875rem;
+    }}
+    mark {{
+      background: #fff0b3;
+      color: inherit;
+      border-radius: 2px;
+      padding: 0 2px;
+    }}
   </style>
 </head>
 <body>
@@ -45,17 +152,17 @@ PAGE_TEMPLATE = """<!doctype html>
   <form method=\"get\" action=\"/\" class=\"search-form\">
     <div class=\"search-row\">
       <div class=\"field\">
-        <label for=\"article_q\">条検索</label>
+        <label for=\"article_q\">条番号</label>
         <input id=\"article_q\" type=\"text\" name=\"article_q\" value=\"{article_query}\" placeholder=\"例: 第111条 / １１１ / 百十一\" />
       </div>
       <div class=\"field\">
-        <label for=\"body_q\">本文キーワード検索</label>
+        <label for=\"body_q\">本文キーワード</label>
         <input id=\"body_q\" type=\"text\" name=\"body_q\" value=\"{body_query}\" placeholder=\"例: 耐火構造\" />
       </div>
       <button type=\"submit\">検索</button>
     </div>
   </form>
-  <p>{meta}</p>
+  <p class=\"meta\"><strong>{meta}</strong></p>
   {table}
 </body>
 </html>
@@ -333,7 +440,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
 
     def render_table(self, rows):
         if not rows:
-            return ""
+            return "<div class='empty'>該当する条文が見つかりませんでした。検索語を変えて再度お試しください。</div>"
         lines = ["<table>", "<thead><tr><th>法令</th><th>条</th><th>本文</th></tr></thead>", "<tbody>"]
         for law_name, article_no, body in rows:
             safe_body = self._safe_snippet(body)
