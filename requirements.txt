@@ -1,4 +1,6 @@
-# This project can run in standard-library mode (no external dependencies required)
+# This project runs with the Python standard library only.
+# No pip-installed runtime dependencies are required.
+# HTTPS verification uses the CA bundle committed at certs/cacert.pem.
 # Optional legacy TUI dependencies:
 # textual==6.6.0
 # pyperclip==1.11.0

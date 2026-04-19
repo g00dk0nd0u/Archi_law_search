@@ -1,16 +1,22 @@
+"""SQLiteに保存した法令データをブラウザから検索するローカルWeb UI。"""
+
 import argparse
+from contextlib import closing
 import html
 from pathlib import Path
 import re
 import sqlite3
+import threading
+import time
+import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 if __package__ in (None, ""):
-    from number_text_utils import int_to_kanji, normalize_separators
+    from number_text_utils import int_to_kanji, normalize_num, normalize_separators
 else:
-    from .number_text_utils import int_to_kanji, normalize_separators
+    from .number_text_utils import int_to_kanji, normalize_num, normalize_separators
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "laws.db"
 
@@ -22,6 +28,10 @@ PAGE_TEMPLATE = """<!doctype html>
   <style>
     body {{ font-family: sans-serif; margin: 1.5rem auto; max-width: 1080px; padding: 0 1rem; }}
     input[type=text] {{ width: 26rem; max-width: 80vw; }}
+    .search-form {{ display: grid; gap: 0.75rem; align-items: end; }}
+    .search-row {{ display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; }}
+    .field {{ display: grid; gap: 0.25rem; }}
+    label {{ font-weight: 600; }}
     table {{ border-collapse: collapse; width: 100%; margin-top: 1rem; }}
     th, td {{ border: 1px solid #ddd; padding: 0.5rem; vertical-align: top; }}
     th {{ background: #f5f5f5; text-align: left; }}
@@ -32,9 +42,18 @@ PAGE_TEMPLATE = """<!doctype html>
 </head>
 <body>
   <h1>建築基準法・施行令 検索</h1>
-  <form method=\"get\" action=\"/\">
-    <input type=\"text\" name=\"q\" value=\"{query}\" placeholder=\"例: 第111条 / 耐火構造\" />
-    <button type=\"submit\">検索</button>
+  <form method=\"get\" action=\"/\" class=\"search-form\">
+    <div class=\"search-row\">
+      <div class=\"field\">
+        <label for=\"article_q\">条検索</label>
+        <input id=\"article_q\" type=\"text\" name=\"article_q\" value=\"{article_query}\" placeholder=\"例: 第111条 / １１１ / 百十一\" />
+      </div>
+      <div class=\"field\">
+        <label for=\"body_q\">本文キーワード検索</label>
+        <input id=\"body_q\" type=\"text\" name=\"body_q\" value=\"{body_query}\" placeholder=\"例: 耐火構造\" />
+      </div>
+      <button type=\"submit\">検索</button>
+    </div>
   </form>
   <p>{meta}</p>
   {table}
@@ -45,6 +64,12 @@ PAGE_TEMPLATE = """<!doctype html>
 
 class LawSearchHandler(BaseHTTPRequestHandler):
     db_path = str(DEFAULT_DB_PATH)
+    LAW_DISPLAY_LABELS = {
+        ("建築基準法", "main"): "法",
+        ("建築基準法", "suppl"): "法・附則",
+        ("建築基準法施行令", "main"): "令",
+        ("建築基準法施行令", "suppl"): "令・附則",
+    }
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -52,19 +77,25 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
             return
 
-        query = parse_qs(parsed.query).get("q", [""])[0].strip()
+        article_query, body_query = self._parse_search_inputs(parsed.query)
         rows = []
         warning = ""
-        if query:
-            rows, warning = self.search(query)
-            meta = f"{len(rows)}件ヒット"
-            if warning:
-                meta = f"{meta}（{warning}）"
+        if article_query and body_query:
+            rows, warning = self.search_article_with_body_keyword(article_query, body_query)
+        else:
+            search_mode, active_query = self._select_search_query(article_query, body_query)
+            if search_mode == "article":
+                rows, warning = self.search_article(active_query)
+            elif search_mode == "body":
+                rows, warning = self.search_body(active_query)
+        if article_query or body_query:
+            meta = self._build_meta(rows, warning)
         else:
             meta = "キーワードを入力してください"
 
         body = PAGE_TEMPLATE.format(
-            query=html.escape(query),
+            article_query=html.escape(article_query),
+            body_query=html.escape(body_query),
             meta=html.escape(meta),
             table=self.render_table(rows),
         ).encode("utf-8")
@@ -78,58 +109,141 @@ class LawSearchHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         return
 
-    def search(self, query: str):
+    @staticmethod
+    def _parse_search_inputs(query_string: str) -> tuple[str, str]:
+        params = parse_qs(query_string)
+        article_query = params.get("article_q", [""])[0].strip()
+        body_query = params.get("body_q", [""])[0].strip()
+        legacy_query = params.get("q", [""])[0].strip()
+        if not body_query and legacy_query:
+            body_query = legacy_query
+        return article_query, body_query
+
+    @staticmethod
+    def _select_search_query(article_query: str, body_query: str) -> tuple[str, str]:
+        if article_query:
+            return "article", article_query
+        if body_query:
+            return "body", body_query
+        return "", ""
+
+    @staticmethod
+    def _build_meta(rows, warning: str) -> str:
+        meta = f"{len(rows)}件ヒット"
+        if warning:
+            meta = f"{meta}（{warning}）"
+        return meta
+
+    def _connect_db(self):
         db_path = Path(self.db_path)
         if not db_path.exists():
-            return [], "DBファイルが見つかりません"
+            return None, "DBファイルが見つかりません"
 
         db_uri = f"{db_path.resolve().as_uri()}?mode=rw"
         try:
-            conn = sqlite3.connect(db_uri, uri=True)
+            return sqlite3.connect(db_uri, uri=True), ""
         except sqlite3.OperationalError:
-            return [], "DBファイルを開けません"
+            return None, "DBファイルを開けません"
 
-        like_sql = """
-            SELECT l.law_name, a.article_no, a.body
+    def search(self, query: str):
+        return self.search_body(query)
+
+    def search_article_with_body_keyword(self, article_query: str, body_query: str):
+        rows, warning = self.search_article(article_query)
+        if not body_query or warning:
+            return rows, warning
+        return self._filter_article_rows_by_body_keyword(rows, body_query), warning
+
+    def search_article(self, query: str):
+        conn, warning = self._connect_db()
+        if conn is None:
+            return [], warning
+
+        sql = """
+            SELECT l.law_name, a.provision_kind, a.article_no, a.body
             FROM articles a
             JOIN laws l ON l.law_id = a.law_id
-            WHERE {where_clause}
-            ORDER BY a.article_sort_base, a.article_sort_branch
+            WHERE a.provision_kind = 'main' AND ({where_clause})
+            ORDER BY
+                CASE l.law_name
+                    WHEN '建築基準法' THEN 0
+                    WHEN '建築基準法施行令' THEN 1
+                    ELSE 2
+                END,
+                a.article_sort_base,
+                a.article_sort_branch,
+                CASE a.provision_kind WHEN 'main' THEN 0 ELSE 1 END,
+                a.article_no
+            LIMIT 100
+        """
+
+        with closing(conn):
+            article_variants, parsed_article = self._article_query_variants(query)
+            main_num, branch_num = parsed_article
+            where_parts = ["a.article_no = ?" for _ in article_variants]
+            params = list(article_variants)
+            if main_num is not None and branch_num is None:
+                branchable_variants = [variant for variant in article_variants if "条" in variant]
+                where_parts.extend(["a.article_no LIKE ?" for _ in branchable_variants])
+                params.extend([f"{variant}の%" for variant in branchable_variants])
+            rows = conn.execute(sql.format(where_clause="\n               OR ".join(where_parts)), params).fetchall()
+            return self._format_result_rows(rows), ""
+
+    def search_body(self, query: str):
+        conn, warning = self._connect_db()
+        if conn is None:
+            return [], warning
+
+        like_sql = """
+            SELECT l.law_name, a.provision_kind, a.article_no, a.body
+            FROM articles a
+            JOIN laws l ON l.law_id = a.law_id
+            WHERE a.provision_kind = 'main' AND (a.body LIKE ? OR l.law_name LIKE ?)
+            ORDER BY
+                CASE l.law_name
+                    WHEN '建築基準法' THEN 0
+                    WHEN '建築基準法施行令' THEN 1
+                    ELSE 2
+                END,
+                a.article_sort_base,
+                a.article_sort_branch,
+                CASE a.provision_kind WHEN 'main' THEN 0 ELSE 1 END,
+                a.article_no
             LIMIT 100
         """
         fts_sql = """
-            SELECT l.law_name, a.article_no, snippet(articles_fts, 1, '<mark>', '</mark>', ' … ', 16)
+            SELECT l.law_name, a.provision_kind, a.article_no, snippet(articles_fts, 1, '<mark>', '</mark>', ' … ', 16)
             FROM articles_fts
             JOIN articles a ON a.id = articles_fts.rowid
             JOIN laws l ON l.law_id = a.law_id
-            WHERE articles_fts MATCH ?
-            ORDER BY a.article_sort_base, a.article_sort_branch
+            WHERE a.provision_kind = 'main' AND articles_fts MATCH ?
+            ORDER BY
+                CASE l.law_name
+                    WHEN '建築基準法' THEN 0
+                    WHEN '建築基準法施行令' THEN 1
+                    ELSE 2
+                END,
+                a.article_sort_base,
+                a.article_sort_branch,
+                CASE a.provision_kind WHEN 'main' THEN 0 ELSE 1 END,
+                a.article_no
             LIMIT 100
         """
 
-        with conn:
-            article_variants, is_article_number_query = self._article_query_variants(query)
-            article_operator = "=" if is_article_number_query else "LIKE"
-            where_parts = [f"a.article_no {article_operator} ?" for _ in article_variants]
-            params = [variant if is_article_number_query else f"%{variant}%" for variant in article_variants]
-            where_parts.extend(["a.body LIKE ?", "l.law_name LIKE ?"])
-            params.extend([f"%{query}%", f"%{query}%"])
-            like_rows = conn.execute(
-                like_sql.format(where_clause="\n               OR ".join(where_parts)),
-                params,
-            ).fetchall()
+        with closing(conn):
+            like_rows = conn.execute(like_sql, (f"%{query}%", f"%{query}%")).fetchall()
             if like_rows:
                 return [
-                    (law_name, article_no, self._build_like_snippet(body, query))
-                    for law_name, article_no, body in like_rows
+                    (self._display_law_name(law_name, provision_kind), article_no, self._build_like_snippet(body, query))
+                    for law_name, provision_kind, article_no, body in like_rows
                 ], ""
 
             try:
-                return conn.execute(fts_sql, (query,)).fetchall(), ""
+                return self._format_result_rows(conn.execute(fts_sql, (query,)).fetchall()), ""
             except sqlite3.OperationalError:
                 # FTS5の構文エラー回避（例: 記号が多いクエリ）
                 quoted = f'"{query}"'
-                return conn.execute(fts_sql, (quoted,)).fetchall(), "クエリをフレーズ検索に変換"
+                return self._format_result_rows(conn.execute(fts_sql, (quoted,)).fetchall()), "クエリをフレーズ検索に変換"
 
     @staticmethod
     def _safe_snippet(snippet_text: str) -> str:
@@ -156,7 +270,37 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         return snippet.replace(query, f"<mark>{query}</mark>", 1)
 
     @staticmethod
-    def _article_query_variants(query: str) -> tuple[list[str], bool]:
+    def _highlight_text(text: str, query: str) -> str:
+        if not text or not query or query not in text:
+            return text
+        return text.replace(query, f"<mark>{query}</mark>")
+
+    @classmethod
+    def _display_law_name(cls, law_name: str, provision_kind: str) -> str:
+        return cls.LAW_DISPLAY_LABELS.get((law_name, provision_kind), law_name)
+
+    @classmethod
+    def _format_result_rows(cls, rows):
+        return [
+            (cls._display_law_name(law_name, provision_kind), article_no, body)
+            for law_name, provision_kind, article_no, body in rows
+        ]
+
+    @classmethod
+    def _filter_article_rows_by_body_keyword(cls, rows, body_query: str):
+        filtered_rows = []
+        for law_name, article_no, body in rows:
+            if body_query not in body:
+                continue
+            filtered_rows.append((law_name, article_no, cls._highlight_text(body, body_query)))
+        return filtered_rows
+
+    @staticmethod
+    def _display_article_no(article_no: str) -> str:
+        return article_no[1:] if article_no.startswith("第") else article_no
+
+    @staticmethod
+    def _article_query_variants(query: str) -> tuple[list[str], tuple[int | None, int | None]]:
         variants: list[str] = []
         seen: set[str] = set()
 
@@ -167,25 +311,25 @@ class LawSearchHandler(BaseHTTPRequestHandler):
                 variants.append(value)
 
         add(query)
-        normalized = normalize_separators(query.strip())
+        normalized = normalize_num(normalize_separators(query.strip()))
         add(normalized)
 
         match = re.fullmatch(r"(?:第)?(\d+)(?:条)?(?:[-の](\d+))?", normalized)
         if not match:
-            return variants, False
+            return variants, (None, None)
 
         main_num = int(match.group(1))
         branch_num = match.group(2)
         if branch_num is None:
             add(f"第{main_num}条")
             add(f"第{int_to_kanji(main_num)}条")
+            return variants, (main_num, None)
         else:
             branch_int = int(branch_num)
             add(f"第{main_num}条の{branch_int}")
             add(f"第{int_to_kanji(main_num)}条の{branch_int}")
             add(f"第{int_to_kanji(main_num)}条の{int_to_kanji(branch_int)}")
-
-        return variants, True
+            return variants, (main_num, branch_int)
 
     def render_table(self, rows):
         if not rows:
@@ -193,10 +337,11 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         lines = ["<table>", "<thead><tr><th>法令</th><th>条</th><th>本文</th></tr></thead>", "<tbody>"]
         for law_name, article_no, body in rows:
             safe_body = self._safe_snippet(body)
+            display_article_no = self._display_article_no(article_no)
             lines.append(
                 "<tr>"
                 f"<td class='law'>{html.escape(law_name)}</td>"
-                f"<td class='article'>{html.escape(article_no)}</td>"
+                f"<td class='article'>{html.escape(display_article_no)}</td>"
                 f"<td class='body'>{safe_body}</td>"
                 "</tr>"
             )
@@ -212,11 +357,29 @@ def parse_args():
     return parser.parse_args()
 
 
+def build_server_url(host: str, port: int) -> str:
+    return f"http://{host}:{port}"
+
+
+def open_browser(url: str, delay_seconds: float = 0.3) -> None:
+    def _open():
+        if delay_seconds > 0:
+            time.sleep(delay_seconds)
+        try:
+            webbrowser.open(url)
+        except Exception as exc:
+            print(f"[WARN] failed to open browser: {exc}")
+
+    threading.Thread(target=_open, daemon=True).start()
+
+
 def main():
     args = parse_args()
     LawSearchHandler.db_path = args.db
     server = ThreadingHTTPServer((args.host, args.port), LawSearchHandler)
-    print(f"[INFO] serving http://{args.host}:{args.port} (db={args.db})")
+    url = build_server_url(args.host, args.port)
+    print(f"[INFO] serving {url} (db={args.db})")
+    open_browser(url)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
