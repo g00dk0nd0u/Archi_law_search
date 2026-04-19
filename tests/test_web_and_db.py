@@ -15,7 +15,7 @@ import sys
 
 sys.path.append(str(ROOT / "src"))
 
-from law_database import LawSource, init_db, iter_articles, upsert_law  # type: ignore
+from law_database import LawSource, _article_sort_key, init_db, iter_articles, upsert_law  # type: ignore
 import laws_api  # type: ignore
 from web_app import PAGE_TEMPLATE, LawSearchHandler, build_server_url, open_browser  # type: ignore
 
@@ -88,6 +88,97 @@ SAMPLE_ORDER_XML = """
           <ParagraphNum>1</ParagraphNum>
           <ParagraphSentence>
             <Sentence>建築基準法施行令の第六条本文。</Sentence>
+          </ParagraphSentence>
+        </Paragraph>
+      </Article>
+    </MainProvision>
+  </LawBody>
+</Root>
+"""
+
+
+SAMPLE_KANJI_ORDER_XML = """
+<Root>
+  <LawBody>
+    <MainProvision>
+      <Article>
+        <ArticleTitle>第七十七条の二十</ArticleTitle>
+        <Paragraph>
+          <ParagraphNum>1</ParagraphNum>
+          <ParagraphSentence>
+            <Sentence>確認の二十。</Sentence>
+          </ParagraphSentence>
+        </Paragraph>
+      </Article>
+      <Article>
+        <ArticleTitle>第七十七条の二十一</ArticleTitle>
+        <Paragraph>
+          <ParagraphNum>1</ParagraphNum>
+          <ParagraphSentence>
+            <Sentence>確認の二十一。</Sentence>
+          </ParagraphSentence>
+        </Paragraph>
+      </Article>
+      <Article>
+        <ArticleTitle>第七十七条の二十四</ArticleTitle>
+        <Paragraph>
+          <ParagraphNum>1</ParagraphNum>
+          <ParagraphSentence>
+            <Sentence>確認の二十四。</Sentence>
+          </ParagraphSentence>
+        </Paragraph>
+      </Article>
+      <Article>
+        <ArticleTitle>第七十七条の三十</ArticleTitle>
+        <Paragraph>
+          <ParagraphNum>1</ParagraphNum>
+          <ParagraphSentence>
+            <Sentence>確認の三十。</Sentence>
+          </ParagraphSentence>
+        </Paragraph>
+      </Article>
+      <Article>
+        <ArticleTitle>第七十七条の三十一</ArticleTitle>
+        <Paragraph>
+          <ParagraphNum>1</ParagraphNum>
+          <ParagraphSentence>
+            <Sentence>確認の三十一。</Sentence>
+          </ParagraphSentence>
+        </Paragraph>
+      </Article>
+      <Article>
+        <ArticleTitle>第七十七条の三十二</ArticleTitle>
+        <Paragraph>
+          <ParagraphNum>1</ParagraphNum>
+          <ParagraphSentence>
+            <Sentence>確認の三十二。</Sentence>
+          </ParagraphSentence>
+        </Paragraph>
+      </Article>
+      <Article>
+        <ArticleTitle>第七十七条の三十四</ArticleTitle>
+        <Paragraph>
+          <ParagraphNum>1</ParagraphNum>
+          <ParagraphSentence>
+            <Sentence>確認の三十四。</Sentence>
+          </ParagraphSentence>
+        </Paragraph>
+      </Article>
+      <Article>
+        <ArticleTitle>第七十七条の三十五の四</ArticleTitle>
+        <Paragraph>
+          <ParagraphNum>1</ParagraphNum>
+          <ParagraphSentence>
+            <Sentence>確認の三十五の四。</Sentence>
+          </ParagraphSentence>
+        </Paragraph>
+      </Article>
+      <Article>
+        <ArticleTitle>第七十七条の三十六</ArticleTitle>
+        <Paragraph>
+          <ParagraphNum>1</ParagraphNum>
+          <ParagraphSentence>
+            <Sentence>確認の三十六。</Sentence>
           </ParagraphSentence>
         </Paragraph>
       </Article>
@@ -272,6 +363,47 @@ class DatabaseAndWebTests(unittest.TestCase):
             safe = LawSearchHandler._safe_snippet(unsafe)
             self.assertIn("&lt;script&gt;", safe)
             self.assertIn("<mark>耐火</mark>", safe)
+
+    def test_article_sort_key_supports_kanji_article_numbers(self):
+        self.assertEqual(_article_sort_key("第1条"), (1, 0))
+        self.assertEqual(_article_sort_key("第2条の2"), (2, 2))
+        self.assertEqual(_article_sort_key("第七十七条の二十"), (77, 20))
+        self.assertEqual(_article_sort_key("第七十七条の三十"), (77, 30))
+        self.assertLess(_article_sort_key("第七十七条の三十"), _article_sort_key("第七十七条の三十一"))
+        self.assertLess(_article_sort_key("第七十七条の三十四"), _article_sort_key("第七十七条の三十五の四"))
+        self.assertLess(_article_sort_key("第七十七条の三十五の四"), _article_sort_key("第七十七条の三十六"))
+
+    def test_search_body_orders_kanji_article_numbers_numerically(self):
+        kanji_root = ET.fromstring(SAMPLE_KANJI_ORDER_XML)
+        source = LawSource("X003", "建築基準法")
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as tf:
+            conn = sqlite3.connect(tf.name)
+            init_db(conn)
+            upsert_law(conn, source, kanji_root)
+            conn.commit()
+            conn.close()
+
+            handler = object.__new__(LawSearchHandler)
+            handler.db_path = tf.name
+
+            rows, warning = LawSearchHandler.search_body(handler, "確認")
+
+        self.assertEqual(warning, "")
+        self.assertEqual(
+            [row[1] for row in rows[:9]],
+            [
+                "第七十七条の二十",
+                "第七十七条の二十一",
+                "第七十七条の二十四",
+                "第七十七条の三十",
+                "第七十七条の三十一",
+                "第七十七条の三十二",
+                "第七十七条の三十四",
+                "第七十七条の三十五の四",
+                "第七十七条の三十六",
+            ],
+        )
 
     def test_parse_search_inputs_prioritizes_article_and_legacy_q_as_body(self):
         article_q, body_q = LawSearchHandler._parse_search_inputs("q=%E8%80%90%E7%81%AB")

@@ -5,6 +5,12 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+import re
+
+if __package__ in (None, ""):
+    from number_text_utils import normalize_num, normalize_separators
+else:
+    from .number_text_utils import normalize_num, normalize_separators
 
 
 @dataclass(frozen=True)
@@ -28,8 +34,8 @@ def _to_text(value: str | None) -> str:
 
 def _article_sort_key(article_no: str) -> tuple[int, int]:
     # 例: 第111条 -> (111, 0), 第111条の2 -> (111, 2)
-    digits = "".join(ch if ch.isdigit() else " " for ch in article_no)
-    numbers = [int(x) for x in digits.split() if x]
+    normalized = normalize_num(normalize_separators(article_no))
+    numbers = [int(value) for value in re.findall(r"\d+", normalized)]
     if not numbers:
         return (10**9, 0)
     if len(numbers) == 1:
