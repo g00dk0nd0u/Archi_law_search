@@ -348,7 +348,7 @@ class DatabaseAndWebTests(unittest.TestCase):
             self.assertGreaterEqual(len(rows), 1)
             self.assertEqual(warning, "")
             self.assertEqual(rows[0][1], "第1条")
-            self.assertEqual(rows[0][0], "法")
+            self.assertEqual(rows[0][0], "建築基準法")
 
             rows_number, warning_number = LawSearchHandler.search_article(handler, "1")
             self.assertGreaterEqual(len(rows_number), 1)
@@ -375,24 +375,24 @@ class DatabaseAndWebTests(unittest.TestCase):
             self.assertEqual([row[1] for row in rows_filtered], ["第2条の2"])
             self.assertEqual(warning_filtered, "")
             self.assertIn("<mark>煙</mark>", rows_filtered[0][2])
-            self.assertEqual(rows_filtered[0][0], "法")
+            self.assertEqual(rows_filtered[0][0], "建築基準法")
 
             rows_six, warning_six = LawSearchHandler.search_article(handler, "6")
             self.assertEqual(warning_six, "")
             self.assertEqual(
                 [(row[0], row[1]) for row in rows_six[:2]],
-                [("法", "第6条"), ("令", "第6条")],
+                [("建築基準法", "第6条"), ("建築基準法施行令", "第6条")],
             )
             self.assertIn("建築物の建築等に関する申請及び確認。", rows_six[0][2])
             self.assertIn("建築基準法施行令の第六条本文。", rows_six[1][2])
-            self.assertNotIn("法・附則", [row[0] for row in rows_six])
+            self.assertNotIn("建築基準法・附則", [row[0] for row in rows_six])
 
             # 日本語の部分一致でもヒットする
             rows_partial, warning_partial = LawSearchHandler.search_body(handler, "耐火")
             self.assertGreaterEqual(len(rows_partial), 1)
             self.assertEqual(warning_partial, "")
             self.assertIn("<mark>耐火</mark>", rows_partial[0][2])
-            self.assertEqual(rows_partial[0][0], "法")
+            self.assertEqual(rows_partial[0][0], "建築基準法")
 
             rows_suppl_only, warning_suppl_only = LawSearchHandler.search_body(handler, "罰則")
             self.assertEqual(rows_suppl_only, [])
@@ -510,7 +510,7 @@ class DatabaseAndWebTests(unittest.TestCase):
 
     def test_build_meta_handles_article_and_warning_cases(self):
         self.assertEqual(LawSearchHandler._build_meta([], ""), "0件ヒット")
-        self.assertEqual(LawSearchHandler._build_meta([("法", "第1条", "本文", "本文")], ""), "1件ヒット")
+        self.assertEqual(LawSearchHandler._build_meta([("建築基準法", "第1条", "本文", "本文")], ""), "1件ヒット")
         self.assertEqual(
             LawSearchHandler._build_meta([], "クエリをフレーズ検索に変換"),
             "0件ヒット（クエリをフレーズ検索に変換）",
@@ -521,6 +521,7 @@ class DatabaseAndWebTests(unittest.TestCase):
             article_query="第1条",
             body_query="耐火",
             meta="1件ヒット",
+            meta_actions="<button>copy</button>",
             table="<div>ok</div>",
         )
         self.assertIn('document.addEventListener("DOMContentLoaded"', html_doc)
@@ -533,6 +534,8 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn('querySelectorAll("td.body.is-expandable")', html_doc)
         self.assertIn('navigator.clipboard.writeText', html_doc)
         self.assertIn('document.querySelectorAll(".copy-button")', html_doc)
+        self.assertIn('document.querySelector(".bulk-copy-button")', html_doc)
+        self.assertIn("meta-actions", html_doc)
         self.assertIn(">Settings<", html_doc)
 
     def test_settings_template_supports_notice_and_table_markup(self):
@@ -543,10 +546,10 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn("<table><tbody></tbody></table>", html_doc)
 
     def test_display_law_name_maps_main_and_suppl(self):
-        self.assertEqual(LawSearchHandler._display_law_name("建築基準法", "main"), "法")
-        self.assertEqual(LawSearchHandler._display_law_name("建築基準法", "suppl"), "法・附則")
-        self.assertEqual(LawSearchHandler._display_law_name("建築基準法施行令", "main"), "令")
-        self.assertEqual(LawSearchHandler._display_law_name("建築基準法施行令", "suppl"), "令・附則")
+        self.assertEqual(LawSearchHandler._display_law_name("建築基準法", "main"), "建築基準法")
+        self.assertEqual(LawSearchHandler._display_law_name("建築基準法", "suppl"), "建築基準法")
+        self.assertEqual(LawSearchHandler._display_law_name("建築基準法施行令", "main"), "建築基準法施行令")
+        self.assertEqual(LawSearchHandler._display_law_name("建築基準法施行令", "suppl"), "建築基準法施行令")
         self.assertEqual(LawSearchHandler._display_law_name("その他", "main"), "その他")
         self.assertEqual(
             LawSearchHandler._display_law_name("建築物の耐震改修の促進に関する法律", "main"),
@@ -584,25 +587,25 @@ class DatabaseAndWebTests(unittest.TestCase):
 
     def test_filter_article_rows_by_body_keyword_highlights_matches(self):
         rows = [
-            ("法", "第2条", "一般構造に関する規定。", "一般構造に関する規定。"),
-            ("法", "第2条の2", "防火設備と排煙に関する規定。", "防火設備と排煙に関する規定。"),
+            ("建築基準法", "第2条", "一般構造に関する規定。", "一般構造に関する規定。"),
+            ("建築基準法", "第2条の2", "防火設備と排煙に関する規定。", "防火設備と排煙に関する規定。"),
         ]
         filtered = LawSearchHandler._filter_article_rows_by_body_keyword(rows, "煙")
         self.assertEqual(
             filtered,
-            [("法", "第2条の2", "防火設備と排<mark>煙</mark>に関する規定。", "防火設備と排<mark>煙</mark>に関する規定。")],
+            [("建築基準法", "第2条の2", "防火設備と排<mark>煙</mark>に関する規定。", "防火設備と排<mark>煙</mark>に関する規定。")],
         )
 
     def test_render_table_embeds_safe_preview_and_full_body(self):
         handler = object.__new__(LawSearchHandler)
         table_html = LawSearchHandler.render_table(
             handler,
-            [("法", "第1条", "…<mark>耐火</mark>…", "<script>alert(1)</script><mark>耐火</mark>構造の全文")],
+            [("建築基準法", "第1条", "…<mark>耐火</mark>…", "<script>alert(1)</script><mark>耐火</mark>構造の全文")],
         )
 
         self.assertIn("class='body is-expandable'", table_html)
         self.assertIn("class='copy-button'", table_html)
-        self.assertIn("data-copy-text='法\n第1条\n&lt;script&gt;alert(1)&lt;/script&gt;耐火構造の全文'", table_html)
+        self.assertIn("data-copy-text='建築基準法\n第1条\n&lt;script&gt;alert(1)&lt;/script&gt;耐火構造の全文'", table_html)
         self.assertIn("hidden", table_html)
         self.assertIn("class='body-preview'", table_html)
         self.assertIn("class='body-full' hidden", table_html)
@@ -619,6 +622,32 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn("class='copy-button'", table_html)
         self.assertNotIn("class='copy-button' title='コピー' data-copy-text='消防法&#xA;第三条&#xA;第三条&#xA;放置物件を除去する。' hidden", table_html)
         self.assertIn("消防法\n第三条\n第三条\n放置物件を除去する。", table_html)
+
+    def test_build_bulk_copy_text_joins_all_rows_without_mark_tags(self):
+        text = LawSearchHandler._build_bulk_copy_text(
+            [
+                ("建築基準法", "第1条", "…<mark>耐火</mark>…", "<mark>耐火</mark>構造の全文"),
+                ("消防法", "第三条", "…<mark>放置</mark>…", "放置物件を除去する。"),
+            ]
+        )
+
+        self.assertEqual(
+            text,
+            "建築基準法\n第1条\n耐火構造の全文\n\n消防法\n第三条\n放置物件を除去する。",
+        )
+        self.assertNotIn("<mark>", text)
+
+    def test_render_meta_actions_shows_bulk_copy_button_only_when_rows_exist(self):
+        handler = object.__new__(LawSearchHandler)
+        html_with_rows = LawSearchHandler._render_meta_actions(
+            handler,
+            [("建築基準法", "第1条", "本文", "本文")],
+        )
+        html_without_rows = LawSearchHandler._render_meta_actions(handler, [])
+
+        self.assertIn("class='bulk-copy-button'", html_with_rows)
+        self.assertIn("検索結果をコピー", html_with_rows)
+        self.assertEqual(html_without_rows, "")
 
     def test_handle_search_page_empty_query_returns_initial_empty_state(self):
         handler = object.__new__(LawSearchHandler)

@@ -1,8 +1,0 @@
-# This project runs with the Python standard library only.
-# No pip-installed runtime dependencies are required.
-# HTTPS verification uses the CA bundle committed at certs/cacert.pem.
-# Optional legacy TUI dependencies:
-# textual==6.6.0
-# pyperclip==1.11.0
-# beautifulsoup4==4.12.3
-# requests==2.32.5

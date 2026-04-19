@@ -128,11 +128,38 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       border: 1px solid #e2e7ef;
       border-radius: 6px;
       padding: 0.45rem 0.7rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.8rem;
     }}
     .meta strong {{
       font-weight: 600;
       color: #1f3656;
     }}
+    .meta-actions {{
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 0.5rem;
+      flex-shrink: 0;
+    }}
+    .bulk-copy-button {{
+      padding: 0.32rem 0.72rem;
+      background: #fff;
+      color: #35506e;
+      border: 1px solid #ccd5e0;
+      border-radius: 5px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }}
+    .bulk-copy-button:hover, .bulk-copy-button:focus {{
+      background: #fdfefe;
+      border-color: #b4c2d1;
+      color: #223d59;
+      outline: none;
+    }}
+    .bulk-copy-button[hidden] {{ display: none; }}
     table {{
       border-collapse: collapse;
       width: 100%;
@@ -251,7 +278,10 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       <button type=\"submit\">検索</button>
     </div>
   </form>
-  <p class=\"meta\"><strong>{meta}</strong></p>
+  <div class=\"meta\">
+    <strong>{meta}</strong>
+    <div class=\"meta-actions\">{meta_actions}</div>
+  </div>
   {table}
   <script>
     document.addEventListener("DOMContentLoaded", function () {{
@@ -374,29 +404,42 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
         }}
       }};
 
-      document.querySelectorAll(".copy-button").forEach(function (button) {{
-        button.addEventListener("click", async function (event) {{
+      const handleCopyButtonClick = async function (button, event) {{
+        if (event) {{
           event.preventDefault();
           event.stopPropagation();
-          const text = button.getAttribute("data-copy-text") || "";
-          if (!text) {{
-            return;
-          }}
-          const originalTitle = button.getAttribute("title") || "コピー";
-          try {{
-            await copyText(text);
-            button.setAttribute("title", "Copied");
-            window.setTimeout(function () {{
-              button.setAttribute("title", originalTitle);
-            }}, 1200);
-          }} catch (_error) {{
-            button.setAttribute("title", "コピー失敗");
-            window.setTimeout(function () {{
-              button.setAttribute("title", originalTitle);
-            }}, 1200);
-          }}
+        }}
+        const text = button.getAttribute("data-copy-text") || "";
+        if (!text) {{
+          return;
+        }}
+        const originalTitle = button.getAttribute("title") || "コピー";
+        try {{
+          await copyText(text);
+          button.setAttribute("title", "Copied");
+          window.setTimeout(function () {{
+            button.setAttribute("title", originalTitle);
+          }}, 1200);
+        }} catch (_error) {{
+          button.setAttribute("title", "コピー失敗");
+          window.setTimeout(function () {{
+            button.setAttribute("title", originalTitle);
+          }}, 1200);
+        }}
+      }};
+
+      document.querySelectorAll(".copy-button").forEach(function (button) {{
+        button.addEventListener("click", async function (event) {{
+          await handleCopyButtonClick(button, event);
         }});
       }});
+
+      const bulkCopyButton = document.querySelector(".bulk-copy-button");
+      if (bulkCopyButton) {{
+        bulkCopyButton.addEventListener("click", async function (event) {{
+          await handleCopyButtonClick(bulkCopyButton, event);
+        }});
+      }}
     }});
   </script>
 </body>
@@ -570,12 +613,7 @@ SETTINGS_PAGE_TEMPLATE = """<!doctype html>
 
 class LawSearchHandler(BaseHTTPRequestHandler):
     db_path = str(DEFAULT_DB_PATH)
-    LAW_DISPLAY_LABELS = {
-        ("建築基準法", "main"): "法",
-        ("建築基準法", "suppl"): "法・附則",
-        ("建築基準法施行令", "main"): "令",
-        ("建築基準法施行令", "suppl"): "令・附則",
-    }
+    LAW_DISPLAY_LABELS = {}
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -618,6 +656,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             article_query=html.escape(article_query),
             body_query=html.escape(body_query),
             meta=html.escape(meta),
+            meta_actions=self._render_meta_actions(rows),
             table=self.render_table(rows),
         ).encode("utf-8")
         self._send_html(body)
@@ -876,6 +915,11 @@ class LawSearchHandler(BaseHTTPRequestHandler):
     def _build_copy_text(cls, law_name: str, article_no: str, full_body: str) -> str:
         return "\n".join([law_name, article_no, cls._plain_text_for_copy(full_body)])
 
+    @classmethod
+    def _build_bulk_copy_text(cls, rows) -> str:
+        blocks = [cls._build_copy_text(law_name, article_no, full_body) for law_name, article_no, _body, full_body in rows]
+        return "\n\n".join(blocks)
+
     @staticmethod
     def _extract_leading_heading(body_text: str, max_scan_length: int = 240, max_heading_length: int = 80) -> str:
         body_text = (body_text or "").strip()
@@ -936,6 +980,15 @@ class LawSearchHandler(BaseHTTPRequestHandler):
     @classmethod
     def _display_law_name(cls, law_name: str, provision_kind: str) -> str:
         return cls.LAW_DISPLAY_LABELS.get((law_name, provision_kind), law_name)
+
+    def _render_meta_actions(self, rows) -> str:
+        if not rows:
+            return ""
+        copy_text = html.escape(self._build_bulk_copy_text(rows), quote=True)
+        return (
+            f"<button type='button' class='bulk-copy-button' title='検索結果をコピー' "
+            f"data-copy-text='{copy_text}'>結果をコピー</button>"
+        )
 
     @classmethod
     def _format_result_rows(cls, rows, body_index: int = 3, full_body_index: int | None = None):
