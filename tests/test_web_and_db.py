@@ -422,7 +422,7 @@ class DatabaseAndWebTests(unittest.TestCase):
 
     def test_build_meta_handles_article_and_warning_cases(self):
         self.assertEqual(LawSearchHandler._build_meta([], ""), "0件ヒット")
-        self.assertEqual(LawSearchHandler._build_meta([("法", "第1条", "本文")], ""), "1件ヒット")
+        self.assertEqual(LawSearchHandler._build_meta([("法", "第1条", "本文", "本文")], ""), "1件ヒット")
         self.assertEqual(
             LawSearchHandler._build_meta([], "クエリをフレーズ検索に変換"),
             "0件ヒット（クエリをフレーズ検索に変換）",
@@ -440,6 +440,7 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn("compositionend", html_doc)
         self.assertIn("bodyValue.length < 2", html_doc)
         self.assertIn("AUTO_SUBMIT_DELAY_MS = 700", html_doc)
+        self.assertIn('querySelectorAll("td.body.is-expandable")', html_doc)
 
     def test_display_law_name_maps_main_and_suppl(self):
         self.assertEqual(LawSearchHandler._display_law_name("建築基準法", "main"), "法")
@@ -455,11 +456,27 @@ class DatabaseAndWebTests(unittest.TestCase):
 
     def test_filter_article_rows_by_body_keyword_highlights_matches(self):
         rows = [
-            ("法", "第2条", "一般構造に関する規定。"),
-            ("法", "第2条の2", "防火設備と排煙に関する規定。"),
+            ("法", "第2条", "一般構造に関する規定。", "一般構造に関する規定。"),
+            ("法", "第2条の2", "防火設備と排煙に関する規定。", "防火設備と排煙に関する規定。"),
         ]
         filtered = LawSearchHandler._filter_article_rows_by_body_keyword(rows, "煙")
-        self.assertEqual(filtered, [("法", "第2条の2", "防火設備と排<mark>煙</mark>に関する規定。")])
+        self.assertEqual(
+            filtered,
+            [("法", "第2条の2", "防火設備と排<mark>煙</mark>に関する規定。", "防火設備と排<mark>煙</mark>に関する規定。")],
+        )
+
+    def test_render_table_embeds_safe_preview_and_full_body(self):
+        handler = object.__new__(LawSearchHandler)
+        table_html = LawSearchHandler.render_table(
+            handler,
+            [("法", "第1条", "…<mark>耐火</mark>…", "<script>alert(1)</script><mark>耐火</mark>構造の全文")],
+        )
+
+        self.assertIn("class='body is-expandable'", table_html)
+        self.assertIn("class='body-preview'", table_html)
+        self.assertIn("class='body-full' hidden", table_html)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", table_html)
+        self.assertIn("<mark>耐火</mark>", table_html)
 
     def test_web_search_missing_db_returns_warning_without_creating_file(self):
         tmpdir = pathlib.Path(tempfile.mkdtemp())

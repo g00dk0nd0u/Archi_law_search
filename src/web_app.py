@@ -130,6 +130,13 @@ PAGE_TEMPLATE = """<!doctype html>
     .law {{ white-space: nowrap; color: #3b6ea5; font-weight: 600; width: 3.5rem; }}
     .article {{ white-space: nowrap; width: 6rem; font-variant-numeric: tabular-nums; }}
     .body {{ white-space: pre-wrap; line-height: 1.72; font-size: 0.9rem; }}
+    .body.is-expandable {{
+      cursor: pointer;
+      transition: background 0.15s;
+    }}
+    .body.is-expandable:hover {{ background: #f7fafd; }}
+    .body-preview, .body-full {{ white-space: pre-wrap; }}
+    .body-full[hidden], .body-preview[hidden] {{ display: none; }}
     .empty {{
       margin-top: 0.35rem;
       background: #f9fbfd;
@@ -245,6 +252,19 @@ PAGE_TEMPLATE = """<!doctype html>
       form.addEventListener("submit", function () {{
         isSubmitting = true;
         clearScheduledSubmit();
+      }});
+
+      document.querySelectorAll("td.body.is-expandable").forEach(function (cell) {{
+        cell.addEventListener("click", function () {{
+          const preview = cell.querySelector(".body-preview");
+          const full = cell.querySelector(".body-full");
+          if (!preview || !full) {{
+            return;
+          }}
+          const expanded = cell.classList.toggle("is-expanded");
+          preview.hidden = expanded;
+          full.hidden = !expanded;
+        }});
       }});
     }});
   </script>
@@ -403,7 +423,12 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             LIMIT 100
         """
         fts_sql = """
-            SELECT l.law_name, a.provision_kind, a.article_no, snippet(articles_fts, 1, '<mark>', '</mark>', ' … ', 16)
+            SELECT
+                l.law_name,
+                a.provision_kind,
+                a.article_no,
+                snippet(articles_fts, 1, '<mark>', '</mark>', ' … ', 16),
+                highlight(articles_fts, 1, '<mark>', '</mark>')
             FROM articles_fts
             JOIN articles a ON a.id = articles_fts.rowid
             JOIN laws l ON l.law_id = a.law_id
@@ -425,16 +450,21 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             like_rows = conn.execute(like_sql, (f"%{query}%", f"%{query}%")).fetchall()
             if like_rows:
                 return [
-                    (self._display_law_name(law_name, provision_kind), article_no, self._build_like_snippet(body, query))
+                    (
+                        self._display_law_name(law_name, provision_kind),
+                        article_no,
+                        self._build_like_snippet(body, query),
+                        self._highlight_text(body, query),
+                    )
                     for law_name, provision_kind, article_no, body in like_rows
                 ], ""
 
             try:
-                return self._format_result_rows(conn.execute(fts_sql, (query,)).fetchall()), ""
+                return self._format_result_rows(conn.execute(fts_sql, (query,)).fetchall(), body_index=3, full_body_index=4), ""
             except sqlite3.OperationalError:
                 # FTS5の構文エラー回避（例: 記号が多いクエリ）
                 quoted = f'"{query}"'
-                return self._format_result_rows(conn.execute(fts_sql, (quoted,)).fetchall()), "クエリをフレーズ検索に変換"
+                return self._format_result_rows(conn.execute(fts_sql, (quoted,)).fetchall(), body_index=3, full_body_index=4), "クエリをフレーズ検索に変換"
 
     @staticmethod
     def _safe_snippet(snippet_text: str) -> str:
@@ -471,20 +501,31 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         return cls.LAW_DISPLAY_LABELS.get((law_name, provision_kind), law_name)
 
     @classmethod
-    def _format_result_rows(cls, rows):
+    def _format_result_rows(cls, rows, body_index: int = 3, full_body_index: int | None = None):
         return [
-            (cls._display_law_name(law_name, provision_kind), article_no, body)
-            for law_name, provision_kind, article_no, body in rows
+            cls._format_result_row(row, body_index=body_index, full_body_index=full_body_index)
+            for row in rows
         ]
 
     @classmethod
     def _filter_article_rows_by_body_keyword(cls, rows, body_query: str):
         filtered_rows = []
-        for law_name, article_no, body in rows:
-            if body_query not in body:
+        for law_name, article_no, body, full_body in rows:
+            if body_query not in full_body:
                 continue
-            filtered_rows.append((law_name, article_no, cls._highlight_text(body, body_query)))
+            highlighted_body = cls._highlight_text(full_body, body_query)
+            filtered_rows.append((law_name, article_no, highlighted_body, highlighted_body))
         return filtered_rows
+
+    @classmethod
+    def _format_result_row(cls, row, body_index: int = 3, full_body_index: int | None = None):
+        law_name, provision_kind, article_no = row[:3]
+        body = row[body_index]
+        if full_body_index is None:
+            full_body = body
+        else:
+            full_body = row[full_body_index]
+        return (cls._display_law_name(law_name, provision_kind), article_no, body, full_body)
 
     @staticmethod
     def _display_article_no(article_no: str) -> str:
@@ -526,14 +567,20 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         if not rows:
             return "<div class='empty'>該当する条文が見つかりませんでした。検索語を変えて再度お試しください。</div>"
         lines = ["<table>", "<thead><tr><th>法令</th><th>条</th><th>本文</th></tr></thead>", "<tbody>"]
-        for law_name, article_no, body in rows:
+        for law_name, article_no, body, full_body in rows:
             safe_body = self._safe_snippet(body)
+            safe_full_body = self._safe_snippet(full_body)
+            is_expandable = safe_body != safe_full_body
+            body_class = "body is-expandable" if is_expandable else "body"
+            body_html = f"<div class='body-preview'>{safe_body}</div>"
+            if is_expandable:
+                body_html += f"<div class='body-full' hidden>{safe_full_body}</div>"
             display_article_no = self._display_article_no(article_no)
             lines.append(
                 "<tr>"
                 f"<td class='law'>{html.escape(law_name)}</td>"
                 f"<td class='article'>{html.escape(display_article_no)}</td>"
-                f"<td class='body'>{safe_body}</td>"
+                f"<td class='{body_class}'>{body_html}</td>"
                 "</tr>"
             )
         lines.append("</tbody></table>")
