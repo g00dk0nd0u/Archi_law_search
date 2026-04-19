@@ -29,6 +29,7 @@ LAW_REGISTRY = [
     LawDefinition("土地区画整理法", "329AC0000000119"),
     LawDefinition("都市再開発法", "344AC0000000038"),
     LawDefinition("消防法", "323AC1000000186"),
+    LawDefinition("消防法施行令", "336CO0000000037"),
     LawDefinition("建築物のエネルギー消費性能の向上等に関する法律", "427AC0000000053"),
     LawDefinition("建築物における衛生的環境の確保に関する法律", "345AC1000000020"),
     LawDefinition("浄化槽法", "358AC1000000043"),
