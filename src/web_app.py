@@ -60,6 +60,7 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       --text-strong: #1a2e4a;
       --text-muted: #4e5968;
       --text-subtle: #505c6d;
+      --placeholder-color: #8b95a3;
       --link-color: #1f3656;
       --accent-color: #3b6ea5;
       --accent-hover: #2d5585;
@@ -78,41 +79,48 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       --copy-button-back: rgba(244, 245, 247, 0.98);
       --feedback-bg: rgba(255, 255, 255, 0.92);
       --feedback-border: #d6dee8;
+      --table-head-bg: #1a2e4a;
+      --table-head-text: #ffffff;
       --mark-bg: #ffdca8;
+      --mark-text: inherit;
       --shadow-ring: 0 0 0 3px rgba(59, 110, 165, 0.15);
     }}
     html[data-theme="dark"] {{
       color-scheme: dark;
-      --bg-color: #111722;
-      --surface-color: #182131;
-      --surface-muted: #1d2738;
-      --surface-soft: #151f2e;
-      --surface-hover: #223147;
-      --surface-accent: #202c3e;
-      --text-color: #e6ebf2;
-      --text-strong: #f2f6fb;
-      --text-muted: #aeb9c8;
-      --text-subtle: #b6c0cf;
-      --link-color: #d9e5f4;
-      --accent-color: #628fca;
-      --accent-hover: #7aa3db;
-      --accent-soft: rgba(98, 143, 202, 0.24);
-      --border-color: #2c3a4f;
-      --border-soft: #33445c;
-      --border-table: #2a3648;
-      --border-input: #415269;
-      --border-button: #415269;
-      --border-copy: #46586f;
-      --border-copy-hover: #6d8199;
-      --nav-bg: #1b2637;
-      --button-text: #f7f9fc;
-      --meta-strong: #edf3fb;
-      --copy-button-bg: rgba(24, 33, 49, 0.94);
-      --copy-button-back: rgba(17, 23, 34, 0.98);
-      --feedback-bg: rgba(24, 33, 49, 0.95);
-      --feedback-border: #43556d;
-      --mark-bg: #f2ad61;
-      --shadow-ring: 0 0 0 3px rgba(98, 143, 202, 0.24);
+      --bg-color: #0d1117;
+      --surface-color: #161b22;
+      --surface-muted: #1f242d;
+      --surface-soft: #121821;
+      --surface-hover: #202833;
+      --surface-accent: #1b232d;
+      --text-color: #e6edf3;
+      --text-strong: #f0f6fc;
+      --text-muted: #9da7b3;
+      --text-subtle: #8b949e;
+      --placeholder-color: #7d8590;
+      --link-color: #c9d1d9;
+      --accent-color: #8b949e;
+      --accent-hover: #a3acb7;
+      --accent-soft: rgba(139, 148, 158, 0.22);
+      --border-color: #30363d;
+      --border-soft: #30363d;
+      --border-table: #2d333b;
+      --border-input: #30363d;
+      --border-button: #30363d;
+      --border-copy: #3d444d;
+      --border-copy-hover: #6e7681;
+      --nav-bg: #161b22;
+      --button-text: #f0f6fc;
+      --meta-strong: #f0f6fc;
+      --copy-button-bg: rgba(22, 27, 34, 0.94);
+      --copy-button-back: rgba(13, 17, 23, 0.98);
+      --feedback-bg: rgba(22, 27, 34, 0.96);
+      --feedback-border: #444c56;
+      --table-head-bg: #21262d;
+      --table-head-text: #f0f6fc;
+      --mark-bg: #f2cc60;
+      --mark-text: #24292f;
+      --shadow-ring: 0 0 0 3px rgba(110, 118, 129, 0.22);
     }}
     body {{
       font-family: "Hiragino Sans", "Yu Gothic UI", sans-serif;
@@ -213,6 +221,9 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       background: var(--surface-color);
       box-shadow: var(--shadow-ring);
     }}
+    input[type=text]::placeholder {{
+      color: var(--placeholder-color);
+    }}
     #article_q {{ width: 14rem; }}
     #body_q {{ width: 30rem; max-width: 80vw; }}
     button, .action-button {{
@@ -295,8 +306,8 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       font-size: 0.875rem;
     }}
     thead th {{
-      background: var(--text-strong);
-      color: var(--button-text);
+      background: var(--table-head-bg);
+      color: var(--table-head-text);
       border-top: none;
       padding: 0.6rem 0.75rem;
       text-align: left;
@@ -381,7 +392,7 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
     }}
     mark {{
       background: var(--mark-bg);
-      color: inherit;
+      color: var(--mark-text);
       border-radius: 2px;
       padding: 0 2px;
     }}
@@ -670,6 +681,7 @@ SETTINGS_PAGE_TEMPLATE = """<!doctype html>
       --text-strong: #1a2e4a;
       --text-muted: #4e5968;
       --text-subtle: #5b6572;
+      --placeholder-color: #8b95a3;
       --link-color: #1f3656;
       --accent-color: #3b6ea5;
       --accent-hover: #2d5585;
@@ -677,6 +689,9 @@ SETTINGS_PAGE_TEMPLATE = """<!doctype html>
       --border-soft: #d9e2ef;
       --border-row: #eaecef;
       --border-button: #c9d3e0;
+      --table-head-bg: #1a2e4a;
+      --table-head-text: #ffffff;
+      --mark-text: inherit;
       --button-secondary: #5f748e;
       --button-secondary-hover: #4d627b;
       --button-danger: #a44949;
@@ -691,32 +706,36 @@ SETTINGS_PAGE_TEMPLATE = """<!doctype html>
     }}
     html[data-theme="dark"] {{
       color-scheme: dark;
-      --bg-color: #111722;
-      --surface-color: #182131;
-      --surface-muted: #1d2738;
-      --surface-soft: #151f2e;
-      --text-color: #e6ebf2;
-      --text-strong: #f2f6fb;
-      --text-muted: #aeb9c8;
-      --text-subtle: #b6c0cf;
-      --link-color: #d9e5f4;
-      --accent-color: #628fca;
-      --accent-hover: #7aa3db;
-      --border-color: #2c3a4f;
-      --border-soft: #33445c;
-      --border-row: #2a3648;
-      --border-button: #415269;
-      --button-secondary: #617791;
-      --button-secondary-hover: #7590b0;
-      --button-danger: #b85a5a;
-      --button-danger-hover: #cf7070;
-      --nav-bg: #1b2637;
-      --button-text: #f7f9fc;
-      --notice-bg: #1d2738;
-      --notice-text: #edf3fb;
-      --notice-error-bg: #3a2024;
-      --notice-error-border: #75474d;
-      --notice-error-text: #f2c7c7;
+      --bg-color: #0d1117;
+      --surface-color: #161b22;
+      --surface-muted: #1f242d;
+      --surface-soft: #121821;
+      --text-color: #e6edf3;
+      --text-strong: #f0f6fc;
+      --text-muted: #9da7b3;
+      --text-subtle: #8b949e;
+      --placeholder-color: #7d8590;
+      --link-color: #c9d1d9;
+      --accent-color: #8b949e;
+      --accent-hover: #a3acb7;
+      --border-color: #30363d;
+      --border-soft: #30363d;
+      --border-row: #2d333b;
+      --border-button: #30363d;
+      --table-head-bg: #21262d;
+      --table-head-text: #f0f6fc;
+      --mark-text: #24292f;
+      --button-secondary: #434c56;
+      --button-secondary-hover: #59636e;
+      --button-danger: #da6d75;
+      --button-danger-hover: #f0888f;
+      --nav-bg: #161b22;
+      --button-text: #f0f6fc;
+      --notice-bg: #1f242d;
+      --notice-text: #f0f6fc;
+      --notice-error-bg: #2d1f23;
+      --notice-error-border: #5c2f35;
+      --notice-error-text: #ffd7d5;
     }}
     body {{
       font-family: "Hiragino Sans", "Yu Gothic UI", sans-serif;
@@ -821,8 +840,8 @@ SETTINGS_PAGE_TEMPLATE = """<!doctype html>
       font-size: 0.875rem;
     }}
     thead th {{
-      background: var(--text-strong);
-      color: var(--button-text);
+      background: var(--table-head-bg);
+      color: var(--table-head-text);
       padding: 0.65rem 0.75rem;
       text-align: left;
       white-space: nowrap;
