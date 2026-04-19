@@ -531,6 +531,8 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn("bodyValue.length < 2", html_doc)
         self.assertIn("AUTO_SUBMIT_DELAY_MS = 700", html_doc)
         self.assertIn('querySelectorAll("td.body.is-expandable")', html_doc)
+        self.assertIn('navigator.clipboard.writeText', html_doc)
+        self.assertIn('document.querySelectorAll(".copy-button")', html_doc)
         self.assertIn(">Settings<", html_doc)
 
     def test_settings_template_supports_notice_and_table_markup(self):
@@ -599,10 +601,24 @@ class DatabaseAndWebTests(unittest.TestCase):
         )
 
         self.assertIn("class='body is-expandable'", table_html)
+        self.assertIn("class='copy-button'", table_html)
+        self.assertIn("data-copy-text='法\n第1条\n&lt;script&gt;alert(1)&lt;/script&gt;耐火構造の全文'", table_html)
+        self.assertIn("hidden", table_html)
         self.assertIn("class='body-preview'", table_html)
         self.assertIn("class='body-full' hidden", table_html)
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", table_html)
         self.assertIn("<mark>耐火</mark>", table_html)
+
+    def test_render_table_shows_copy_button_for_full_rows_without_hidden_state(self):
+        handler = object.__new__(LawSearchHandler)
+        table_html = LawSearchHandler.render_table(
+            handler,
+            [("消防法", "第三条", "第三条\n放置物件を除去する。", "第三条\n放置物件を除去する。")],
+        )
+
+        self.assertIn("class='copy-button'", table_html)
+        self.assertNotIn("class='copy-button' title='コピー' data-copy-text='消防法&#xA;第三条&#xA;第三条&#xA;放置物件を除去する。' hidden", table_html)
+        self.assertIn("消防法\n第三条\n第三条\n放置物件を除去する。", table_html)
 
     def test_handle_search_page_empty_query_returns_initial_empty_state(self):
         handler = object.__new__(LawSearchHandler)

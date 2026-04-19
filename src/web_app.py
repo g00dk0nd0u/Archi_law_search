@@ -163,6 +163,11 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
     .law {{ white-space: nowrap; color: #3b6ea5; font-weight: 600; width: 6rem; }}
     .article {{ white-space: nowrap; width: 6rem; font-variant-numeric: tabular-nums; }}
     .body {{ white-space: pre-wrap; line-height: 1.72; font-size: 0.9rem; }}
+    .body-wrap {{
+      position: relative;
+      min-height: 1.6rem;
+      padding-right: 2.1rem;
+    }}
     .body.is-expandable {{
       cursor: pointer;
       transition: background 0.15s;
@@ -170,6 +175,45 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
     .body.is-expandable:hover {{ background: #f7fafd; }}
     .body-preview, .body-full {{ white-space: pre-wrap; }}
     .body-full[hidden], .body-preview[hidden] {{ display: none; }}
+    .copy-button {{
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 1.65rem;
+      height: 1.65rem;
+      border: 1px solid #d5dbe4;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.92);
+      color: #5f6f82;
+      cursor: pointer;
+      padding: 0;
+      transition: border-color 0.15s, color 0.15s, background 0.15s;
+    }}
+    .copy-button::before, .copy-button::after {{
+      content: "";
+      position: absolute;
+      border: 1.4px solid currentColor;
+      border-radius: 2px;
+      width: 0.5rem;
+      height: 0.62rem;
+    }}
+    .copy-button::before {{
+      top: 0.42rem;
+      left: 0.48rem;
+      background: rgba(255, 255, 255, 0.92);
+    }}
+    .copy-button::after {{
+      top: 0.3rem;
+      left: 0.62rem;
+      background: rgba(244, 245, 247, 0.98);
+    }}
+    .copy-button:hover, .copy-button:focus {{
+      border-color: #aebccc;
+      color: #314b67;
+      background: #fff;
+      outline: none;
+    }}
+    .copy-button[hidden] {{ display: none; }}
     .empty {{
       margin-top: 0.35rem;
       background: #f9fbfd;
@@ -296,12 +340,61 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
         cell.addEventListener("click", function () {{
           const preview = cell.querySelector(".body-preview");
           const full = cell.querySelector(".body-full");
+          const copyButton = cell.querySelector(".copy-button");
           if (!preview || !full) {{
             return;
           }}
           const expanded = cell.classList.toggle("is-expanded");
           preview.hidden = expanded;
           full.hidden = !expanded;
+          if (copyButton) {{
+            copyButton.hidden = !expanded;
+          }}
+        }});
+      }});
+
+      const copyText = async function (text) {{
+        if (navigator.clipboard && navigator.clipboard.writeText) {{
+          await navigator.clipboard.writeText(text);
+          return true;
+        }}
+
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "absolute";
+        textarea.style.left = "-9999px";
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {{
+          document.execCommand("copy");
+          return true;
+        }} finally {{
+          document.body.removeChild(textarea);
+        }}
+      }};
+
+      document.querySelectorAll(".copy-button").forEach(function (button) {{
+        button.addEventListener("click", async function (event) {{
+          event.preventDefault();
+          event.stopPropagation();
+          const text = button.getAttribute("data-copy-text") || "";
+          if (!text) {{
+            return;
+          }}
+          const originalTitle = button.getAttribute("title") || "コピー";
+          try {{
+            await copyText(text);
+            button.setAttribute("title", "Copied");
+            window.setTimeout(function () {{
+              button.setAttribute("title", originalTitle);
+            }}, 1200);
+          }} catch (_error) {{
+            button.setAttribute("title", "コピー失敗");
+            window.setTimeout(function () {{
+              button.setAttribute("title", originalTitle);
+            }}, 1200);
+          }}
         }});
       }});
     }});
@@ -776,6 +869,14 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         return safe.replace(placeholder_open, "<mark>").replace(placeholder_close, "</mark>")
 
     @staticmethod
+    def _plain_text_for_copy(text: str) -> str:
+        return (text or "").replace("<mark>", "").replace("</mark>", "")
+
+    @classmethod
+    def _build_copy_text(cls, law_name: str, article_no: str, full_body: str) -> str:
+        return "\n".join([law_name, article_no, cls._plain_text_for_copy(full_body)])
+
+    @staticmethod
     def _extract_leading_heading(body_text: str, max_scan_length: int = 240, max_heading_length: int = 80) -> str:
         body_text = (body_text or "").strip()
         if not body_text:
@@ -905,9 +1006,16 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             safe_full_body = self._safe_snippet(full_body)
             is_expandable = safe_body != safe_full_body
             body_class = "body is-expandable" if is_expandable else "body"
-            body_html = f"<div class='body-preview'>{safe_body}</div>"
+            copy_text = html.escape(self._build_copy_text(law_name, article_no, full_body), quote=True)
+            copy_hidden_attr = " hidden" if is_expandable else ""
+            body_html = (
+                "<div class='body-wrap'>"
+                f"<button type='button' class='copy-button' title='コピー' data-copy-text='{copy_text}'{copy_hidden_attr}></button>"
+                f"<div class='body-preview'>{safe_body}</div>"
+            )
             if is_expandable:
                 body_html += f"<div class='body-full' hidden>{safe_full_body}</div>"
+            body_html += "</div>"
             display_article_no = self._display_article_no(article_no)
             lines.append(
                 "<tr>"
