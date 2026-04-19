@@ -303,6 +303,11 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertEqual(LawSearchHandler._display_law_name("建築基準法施行令", "suppl"), "令・附則")
         self.assertEqual(LawSearchHandler._display_law_name("その他", "main"), "その他")
 
+    def test_display_article_no_omits_leading_dai(self):
+        self.assertEqual(LawSearchHandler._display_article_no("第六条"), "六条")
+        self.assertEqual(LawSearchHandler._display_article_no("第2条の2"), "2条の2")
+        self.assertEqual(LawSearchHandler._display_article_no("六条"), "六条")
+
     def test_filter_article_rows_by_body_keyword_highlights_matches(self):
         rows = [
             ("法", "第2条", "一般構造に関する規定。"),

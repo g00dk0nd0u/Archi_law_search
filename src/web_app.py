@@ -296,6 +296,10 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         return filtered_rows
 
     @staticmethod
+    def _display_article_no(article_no: str) -> str:
+        return article_no[1:] if article_no.startswith("第") else article_no
+
+    @staticmethod
     def _article_query_variants(query: str) -> tuple[list[str], tuple[int | None, int | None]]:
         variants: list[str] = []
         seen: set[str] = set()
@@ -333,10 +337,11 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         lines = ["<table>", "<thead><tr><th>法令</th><th>条</th><th>本文</th></tr></thead>", "<tbody>"]
         for law_name, article_no, body in rows:
             safe_body = self._safe_snippet(body)
+            display_article_no = self._display_article_no(article_no)
             lines.append(
                 "<tr>"
                 f"<td class='law'>{html.escape(law_name)}</td>"
-                f"<td class='article'>{html.escape(article_no)}</td>"
+                f"<td class='article'>{html.escape(display_article_no)}</td>"
                 f"<td class='body'>{safe_body}</td>"
                 "</tr>"
             )
