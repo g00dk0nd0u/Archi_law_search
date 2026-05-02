@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Create a ZIP snapshot of this repository for ChatGPT upload.
+Create a ZIP snapshot of this repository for local archive or review.
 
 - Uses only Python standard library
 - Prefers Git-tracked files, but also includes untracked working files
@@ -240,7 +240,7 @@ def create_zip(repo_root: Path, output_dir: Path) -> Path:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Export repository files to ZIP for ChatGPT review."
+        description="Export repository files to ZIP."
     )
     parser.add_argument(
         "--repo",

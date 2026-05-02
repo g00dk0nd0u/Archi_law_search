@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import pathlib
+import json
 import sqlite3
+import subprocess
 import tempfile
 import time
 import unittest
@@ -32,6 +34,7 @@ from law_database import (  # type: ignore
 from law_registry import DEFAULT_LAWS, LAW_REGISTRY  # type: ignore
 import laws_api  # type: ignore
 from web_app import SEARCH_PAGE_TEMPLATE, SETTINGS_PAGE_TEMPLATE, LawSearchHandler, build_server_url, open_browser  # type: ignore
+from cli.search_laws import search_laws as cli_search_laws  # type: ignore
 
 
 def _maybe_fts_count(conn):
@@ -516,6 +519,70 @@ class DatabaseAndWebTests(unittest.TestCase):
                 "第七十七条の三十五の四",
                 "第七十七条の三十六",
             ],
+        )
+
+    def test_cli_search_laws_prefers_exact_law_name_match(self):
+        main_root = ET.fromstring(SAMPLE_MAIN_XML)
+        order_root = ET.fromstring(SAMPLE_ORDER_XML)
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as tf:
+            conn = sqlite3.connect(tf.name)
+            init_db(conn)
+            upsert_law(conn, LawSource("X001", "建築基準法"), main_root)
+            upsert_law(conn, LawSource("X002", "建築基準法施行令"), order_root)
+            conn.commit()
+            conn.close()
+
+            payload = cli_search_laws(
+                db_path=pathlib.Path(tf.name),
+                law="建築基準法",
+                article="第6条",
+                limit=10,
+            )
+
+        self.assertEqual(payload["count"], 2)
+        self.assertEqual(
+            {row["law_title"] for row in payload["results"]},
+            {"建築基準法"},
+        )
+
+    def test_cli_module_runs_with_python_m(self):
+        main_root = ET.fromstring(SAMPLE_MAIN_XML)
+        order_root = ET.fromstring(SAMPLE_ORDER_XML)
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as tf:
+            conn = sqlite3.connect(tf.name)
+            init_db(conn)
+            upsert_law(conn, LawSource("X001", "建築基準法"), main_root)
+            upsert_law(conn, LawSource("X002", "建築基準法施行令"), order_root)
+            conn.commit()
+            conn.close()
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "cli.search_laws",
+                    "--db",
+                    tf.name,
+                    "--law",
+                    "建築基準法",
+                    "--article",
+                    "第6条",
+                    "--json",
+                ],
+                cwd=str(ROOT),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["count"], 2)
+        self.assertEqual(
+            {row["law_title"] for row in payload["results"]},
+            {"建築基準法"},
         )
 
     def test_default_registry_contains_only_three_initial_import_targets(self):

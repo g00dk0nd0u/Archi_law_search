@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-Lightweight SQLite search helper for ChatGPT analysis mode.
-"""
+"""SQLite search helper for Codex and local CLI investigation."""
 
 from __future__ import annotations
 
@@ -17,7 +15,6 @@ from typing import Any
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_DB_CANDIDATES = (
     SCRIPT_DIR / "laws.db",
-    SCRIPT_DIR / "data" / "laws.db",
     SCRIPT_DIR.parent / "data" / "laws.db",
 )
 KANJI_DIGITS_REV = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"]
@@ -69,8 +66,7 @@ def table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
 def detect_schema(conn: sqlite3.Connection) -> dict[str, str]:
     laws_columns = table_columns(conn, "laws")
     articles_columns = table_columns(conn, "articles")
-
-    schema = {
+    return {
         "laws_table": "laws",
         "articles_table": "articles",
         "fts_table": "articles_fts",
@@ -89,7 +85,6 @@ def detect_schema(conn: sqlite3.Connection) -> dict[str, str]:
             articles_columns, ("body", "article_text", "text")
         ),
     }
-    return schema
 
 
 def has_fts5_support(conn: sqlite3.Connection) -> bool:
@@ -162,6 +157,46 @@ def connect_db(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
+def resolve_law_filter(
+    conn: sqlite3.Connection,
+    schema: dict[str, str],
+    law: str,
+) -> tuple[str, str] | None:
+    law_value = (law or "").strip()
+    if not law_value:
+        return None
+
+    row = conn.execute(
+        f"""
+        SELECT 1
+        FROM {schema["laws_table"]}
+        WHERE {schema["law_title_col"]} = ?
+        LIMIT 1
+        """,
+        (law_value,),
+    ).fetchone()
+    if row is not None:
+        return ("exact", law_value)
+    return ("like", law_value)
+
+
+def apply_law_filter_clause(
+    clauses: list[str],
+    params: list[Any],
+    schema: dict[str, str],
+    law_filter: tuple[str, str] | None,
+) -> None:
+    if law_filter is None:
+        return
+    mode, value = law_filter
+    if mode == "exact":
+        clauses.append(f'l.{schema["law_title_col"]} = ?')
+        params.append(value)
+        return
+    clauses.append(f'l.{schema["law_title_col"]} LIKE ?')
+    params.append(f"%{value}%")
+
+
 def search_laws(
     db_path: Path,
     query: str = "",
@@ -214,6 +249,7 @@ def execute_search(
     tokens = tokenize_query(query)
     article_variants = build_article_variants(article)
     warnings: list[str] = []
+    law_filter = resolve_law_filter(conn, schema, law)
 
     if not tokens and not law and not article and not law_id:
         return [], "empty", ["No search condition was given."]
@@ -224,7 +260,7 @@ def execute_search(
                 conn=conn,
                 schema=schema,
                 tokens=tokens,
-                law=law,
+                law_filter=law_filter,
                 article_variants=article_variants,
                 law_id=law_id,
                 limit=limit,
@@ -236,7 +272,7 @@ def execute_search(
         conn=conn,
         schema=schema,
         tokens=tokens,
-        law=law,
+        law_filter=law_filter,
         article_variants=article_variants,
         law_id=law_id,
         limit=limit,
@@ -248,7 +284,7 @@ def run_fts_search(
     conn: sqlite3.Connection,
     schema: dict[str, str],
     tokens: list[str],
-    law: str,
+    law_filter: tuple[str, str] | None,
     article_variants: list[str],
     law_id: str,
     limit: int,
@@ -258,9 +294,7 @@ def run_fts_search(
     if tokens:
         clauses.append(f'{schema["fts_table"]} MATCH ?')
         params.append(" AND ".join(quote_fts_term(token) for token in tokens))
-    if law:
-        clauses.append(f'l.{schema["law_title_col"]} LIKE ?')
-        params.append(f"%{law}%")
+    apply_law_filter_clause(clauses, params, schema, law_filter)
     if law_id:
         clauses.append(f'l.{schema["law_id_col"]} LIKE ?')
         params.append(f"%{law_id}%")
@@ -303,7 +337,7 @@ def run_like_search(
     conn: sqlite3.Connection,
     schema: dict[str, str],
     tokens: list[str],
-    law: str,
+    law_filter: tuple[str, str] | None,
     article_variants: list[str],
     law_id: str,
     limit: int,
@@ -322,9 +356,7 @@ def run_like_search(
         wildcard = f"%{token}%"
         params.extend((wildcard, wildcard, wildcard))
 
-    if law:
-        clauses.append(f'l.{schema["law_title_col"]} LIKE ?')
-        params.append(f"%{law}%")
+    apply_law_filter_clause(clauses, params, schema, law_filter)
     if law_id:
         clauses.append(f'l.{schema["law_id_col"]} LIKE ?')
         params.append(f"%{law_id}%")
@@ -379,12 +411,17 @@ def row_to_result(row: sqlite3.Row, source: str) -> dict[str, Any]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Search laws.db and output JSON.")
-    parser.add_argument("--db", help="Path to laws.db. Default: auto-detect near the script.")
+    parser.add_argument("--db", help="Path to laws.db. Default: auto-detect near the repo.")
     parser.add_argument("--query", default="", help="Keyword query. Whitespace means AND search.")
-    parser.add_argument("--law", default="", help="Partial match for law title.")
-    parser.add_argument("--law-id", default="", help="Partial match for law_id.")
+    parser.add_argument("--law", default="", help="Law name. Exact match is preferred when available.")
+    parser.add_argument("--law-id", default="", help="Law ID filter.")
     parser.add_argument("--article", default="", help="Article number filter, e.g. 第112条.")
     parser.add_argument("--limit", type=int, default=20, help="Result limit. Default: 20.")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output JSON. This is the default format and is kept for explicit CLI usage.",
+    )
     parser.add_argument(
         "--json-pretty",
         action="store_true",

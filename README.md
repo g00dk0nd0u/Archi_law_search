@@ -1,48 +1,55 @@
-# Archi Law Search（建築法規検索）
+# Archi Law Search
 
-建築基準法（`325AC0000000201`）、建築基準法施行令（`325CO0000000338`）、建築士法（`325AC1000000202`）をデフォルトで e-Gov 法令 API から取得し、SQLite に格納して検索するアプリです。その他の法令は Web UI の `Settings` から追加・更新・削除できます。
+`data/laws.db` を根拠に、建築関連法令を検索するためのリポジトリです。用途は 2 つです。
 
-このリポジトリは **Python標準ライブラリのみ** で動作する構成です。  
-- Python 3.9 系を含む標準的な CPython で動作するようにしています
-- SQLite の FTS5 が使える環境では全文検索を強化し、使えない環境では LIKE 検索へ自動フォールバックします
-- 事前準備: `src.prepare_sqlite`（API取得 → SQLite格納）
-- 利用時UI: `src.web_app`（ローカルWeb UI）
+- 人間がブラウザUIで手動検索する Web アプリ
+- Codex が CLI 経由で DB 検索し、法令調査や根拠確認に使う運用
 
-HTTPS 接続に必要な CA バンドルは `certs/cacert.pem` としてリポジトリに同梱しています。追加の `pip install` は不要です。
+このリポジトリは Python 標準ライブラリのみで動作します。HTTPS 接続に必要な CA バンドルは [certs/cacert.pem](/Users/ryokondo/Documents/iMac_Python/Archi_law_search/certs/cacert.pem) を同梱しています。
 
-## クイックスタート
+## Webアプリとして使う
 
-### 1) SQLiteを準備
+最初に DB を準備します。
+
 ```bash
 python -m src.prepare_sqlite --db data/laws.db
 ```
 
-`--asof YYYY-MM-DD` を指定すると基準日で取得できます。初期取込対象は `建築基準法` `建築基準法施行令` `建築士法` の3件です。
+次に Web アプリを起動します。
 
-### 2) Web UIを起動
 ```bash
 python -m src.web_app --db data/laws.db --host 127.0.0.1 --port 8765
 ```
 
-ブラウザで `http://127.0.0.1:8765` を開いて検索します。右上の `Settings` から、法令マスタ一覧を見ながら追加取込・更新・削除ができます。
+ブラウザで `http://127.0.0.1:8765` を開いて検索します。`Settings` から法令の追加・更新・削除もできます。
 
-## データベース設計（概要）
-- `laws`: 法令マスタ（法令ID・法令名・更新日時）
-- `articles`: 条文（法令ID・条番号・本文・並び替え用キー）
-- `articles_fts`: FTS5 が使える環境でのみ作成される全文検索テーブル
+## Codex / CLI として使う
 
-FTS5 が有効な環境では、`articles` への INSERT/UPDATE/DELETE はトリガーで `articles_fts` に自動反映されます。  
-FTS5 が使えない環境では `articles_fts` を作成せず、本文検索は LIKE ベースの互換モードで継続します。
+法令調査では、必ず `python -m cli.search_laws` を使って `data/laws.db` を検索します。
 
-## UIについて
-このリポジトリは `src.web_app` によるローカルWeb UIを利用します。  
-検索前に `python -m src.prepare_sqlite --db data/laws.db` を実行し、その後 `python -m src.web_app --db data/laws.db --host 127.0.0.1 --port 8765` で起動してください。
+```bash
+python -m cli.search_laws --query "容積率" --limit 10
+python -m cli.search_laws --law-id 325AC0000000201 --article 第五十二条 --json-pretty
+python -m cli.search_laws --law "建築基準法" --article 第五十二条 --json-pretty
+```
+
+`--law` は、DB 内に完全一致する法令名があるときは完全一致で検索し、完全一致がないときだけ部分一致にフォールバックします。法令が分かる場合は `--law-id` の使用を推奨します。
+
+## DBの場所
+
+- 共通DB: [data/laws.db](/Users/ryokondo/Documents/iMac_Python/Archi_law_search/data/laws.db)
+
+現在の DB 収録範囲や運用上の注意は [docs/DB_POLICY.md](/Users/ryokondo/Documents/iMac_Python/Archi_law_search/docs/DB_POLICY.md) を参照してください。
+
+## docs
+
+- [docs/CODEX_USAGE.md](/Users/ryokondo/Documents/iMac_Python/Archi_law_search/docs/CODEX_USAGE.md)
+- [docs/USER_MANUAL.md](/Users/ryokondo/Documents/iMac_Python/Archi_law_search/docs/USER_MANUAL.md)
+- [docs/DEVELOPMENT.md](/Users/ryokondo/Documents/iMac_Python/Archi_law_search/docs/DEVELOPMENT.md)
+- [docs/DB_POLICY.md](/Users/ryokondo/Documents/iMac_Python/Archi_law_search/docs/DB_POLICY.md)
 
 ## テスト
-- 回帰テスト: `python -m unittest tests.test_web_and_db`
 
-## Rhino 8 / Python 3.9 / FTS5なし想定の確認
-1. Rhino 8 の内蔵 CPython 3.9 で `src.web_app` と `src.prepare_sqlite` が構文エラーなく読み込めることを確認します。
-2. `src.prepare_sqlite` で SQLite を作成し、`src.web_app` を起動します。
-3. 条番号検索が動くことを確認します。
-4. 本文キーワード検索で、FTS5 が無い環境でも例外で落ちずに LIKE 検索で結果が返ることを確認します。
+```bash
+python -m unittest
+```
