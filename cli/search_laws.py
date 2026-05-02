@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
 import json
 import re
 import sqlite3
@@ -14,6 +13,9 @@ from typing import Any
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+DEFAULT_EXPORT_DIR = REPO_ROOT / "output"
+DEFAULT_EXPORT_FILENAME = "law_search_results.txt"
 DEFAULT_DB_CANDIDATES = (
     SCRIPT_DIR / "laws.db",
     SCRIPT_DIR.parent / "data" / "laws.db",
@@ -257,10 +259,20 @@ def build_export_search_label(
 
 
 def build_txt_export_text(payload: dict[str, Any]) -> str:
+    query = str(payload.get("query", "") or "")
+    law = str(payload.get("law", "") or "")
+    law_id = str(payload.get("law_id", "") or "")
+    article = str(payload.get("article", "") or "")
+    limit = payload.get("limit", "")
     lines = [
-        "法令検索結果 原文出力",
-        f"検索条件: {build_export_search_label(payload.get('query', ''), payload.get('law', ''), payload.get('article', ''), payload.get('law_id', ''))}",
-        f"出力日時: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        "法令検索結果 原文一覧",
+        "",
+        "検索条件:",
+        f"- query: {query}",
+        f"- law: {law}",
+        f"- law_id: {law_id}",
+        f"- article: {article}",
+        f"- limit: {limit}",
         "",
     ]
 
@@ -270,7 +282,7 @@ def build_txt_export_text(payload: dict[str, Any]) -> str:
         article_number = str(row.get("article_number", "") or "")
         article_title = str(row.get("article_title", "") or "")
         article_text = str(row.get("article_text", "") or "")
-        heading = f"{index}. {law_title} {article_number}{article_title}"
+        heading = f"【{index}】{law_title} {article_number}{article_title}".strip()
 
         lines.extend(
             [
@@ -293,6 +305,40 @@ def export_results_txt(export_path: Path, payload: dict[str, Any]) -> Path:
     export_path.parent.mkdir(parents=True, exist_ok=True)
     export_path.write_text(build_txt_export_text(payload), encoding="utf-8")
     return export_path
+
+
+def resolve_export_path(export_txt: str) -> Path:
+    raw = (export_txt or "").strip()
+    if not raw:
+        raise ValueError("export_txt path is empty")
+
+    export_path = Path(raw).expanduser()
+    if export_path.is_absolute():
+        return export_path
+    if export_path.parent == Path("."):
+        return DEFAULT_EXPORT_DIR / export_path.name
+    return REPO_ROOT / export_path
+
+
+def build_export_summary(payload: dict[str, Any], export_path: Path) -> dict[str, Any]:
+    results = [
+        {
+            "law_title": str(row.get("law_title", "") or ""),
+            "article_number": str(row.get("article_number", "") or ""),
+            "article_title": str(row.get("article_title", "") or ""),
+        }
+        for row in payload.get("results", [])
+    ]
+    export_label = (
+        str(export_path.relative_to(REPO_ROOT))
+        if export_path.is_relative_to(REPO_ROOT)
+        else str(export_path)
+    )
+    return {
+        "count": payload.get("count", 0),
+        "export_txt": export_label,
+        "results": results,
+    }
 
 
 def execute_search(
@@ -477,8 +523,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--limit", type=int, default=20, help="Result limit. Default: 20.")
     parser.add_argument(
         "--export-txt",
+        nargs="?",
+        const=DEFAULT_EXPORT_FILENAME,
         default="",
-        help="Write the matched article texts to a UTF-8 .txt file.",
+        help="Write matched article texts to a UTF-8 .txt file. If omitted, output/law_search_results.txt is used.",
     )
     parser.add_argument(
         "--json",
@@ -507,8 +555,11 @@ def main() -> int:
             law_id=args.law_id,
             limit=args.limit,
         )
+        output_payload = payload
         if args.export_txt:
-            export_results_txt(Path(args.export_txt).expanduser(), payload)
+            export_path = resolve_export_path(args.export_txt)
+            export_results_txt(export_path, payload)
+            output_payload = build_export_summary(payload, export_path)
     except KeyboardInterrupt:
         print(json.dumps({"error": "cancelled"}), file=sys.stderr)
         return 130
@@ -519,7 +570,7 @@ def main() -> int:
     dump_kwargs = {"ensure_ascii": False}
     if args.json_pretty:
         dump_kwargs["indent"] = 2
-    print(json.dumps(payload, **dump_kwargs))
+    print(json.dumps(output_payload, **dump_kwargs))
     return 0
 
 

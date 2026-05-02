@@ -625,14 +625,16 @@ class DatabaseAndWebTests(unittest.TestCase):
                 article="第1条",
                 limit=10,
             )
-            export_path = pathlib.Path(td) / "outputs" / "law_refs.txt"
+            export_path = pathlib.Path(td) / "output" / "law_refs.txt"
             export_results_txt(export_path, payload)
 
             text = export_path.read_text(encoding="utf-8")
 
-        self.assertIn("法令検索結果 原文出力", text)
-        self.assertIn("検索条件: 法令名=建築基準法 / 条番号=第1条", text)
-        self.assertIn("1. 建築基準法 第1条", text)
+        self.assertIn("法令検索結果 原文一覧", text)
+        self.assertIn("検索条件:", text)
+        self.assertIn("- law: 建築基準法", text)
+        self.assertIn("- article: 第1条", text)
+        self.assertIn("【1】建築基準法 第1条", text)
         self.assertIn("耐火構造について定める。", text)
 
     def test_build_txt_export_text_handles_empty_results(self):
@@ -642,12 +644,72 @@ class DatabaseAndWebTests(unittest.TestCase):
                 "law": "",
                 "law_id": "",
                 "article": "",
+                "limit": 20,
                 "results": [],
             }
         )
 
-        self.assertIn("検索条件: 存在しない語", text)
+        self.assertIn("- query: 存在しない語", text)
         self.assertIn("検索結果はありません。", text)
+
+    def test_cli_module_export_txt_creates_output_and_hides_article_text_from_stdout(self):
+        main_root = ET.fromstring(SAMPLE_MAIN_XML)
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as tf:
+            conn = sqlite3.connect(tf.name)
+            init_db(conn)
+            upsert_law(conn, LawSource("X001", "建築基準法"), main_root)
+            conn.commit()
+            conn.close()
+
+            export_path = ROOT / "output" / "law_refs.txt"
+            if export_path.exists():
+                export_path.unlink()
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "cli.search_laws",
+                    "--db",
+                    tf.name,
+                    "--law",
+                    "建築基準法",
+                    "--article",
+                    "第1条",
+                    "--limit",
+                    "10",
+                    "--export-txt",
+                    "law_refs.txt",
+                ],
+                cwd=str(ROOT),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            try:
+                self.assertEqual(result.returncode, 0, msg=result.stderr)
+                self.assertTrue(export_path.exists())
+                export_text = export_path.read_text(encoding="utf-8")
+                self.assertIn("耐火構造について定める。", export_text)
+
+                payload = json.loads(result.stdout)
+                self.assertEqual(payload["count"], 1)
+                self.assertEqual(payload["export_txt"], "output/law_refs.txt")
+                self.assertEqual(
+                    payload["results"],
+                    [
+                        {
+                            "law_title": "建築基準法",
+                            "article_number": "第1条",
+                            "article_title": "",
+                        }
+                    ],
+                )
+                self.assertNotIn("article_text", result.stdout)
+                self.assertNotIn("耐火構造について定める。", result.stdout)
+            finally:
+                if export_path.exists():
+                    export_path.unlink()
 
     def test_default_registry_contains_only_three_initial_import_targets(self):
         self.assertEqual([law.law_name for law in DEFAULT_LAWS], ["建築基準法", "建築基準法施行令", "建築士法"])
