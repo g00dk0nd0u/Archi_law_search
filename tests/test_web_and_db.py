@@ -546,6 +546,29 @@ class DatabaseAndWebTests(unittest.TestCase):
             {"建築基準法"},
         )
 
+    def test_cli_search_laws_article_prefix_includes_branch_articles(self):
+        main_root = ET.fromstring(SAMPLE_MAIN_XML)
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as tf:
+            conn = sqlite3.connect(tf.name)
+            init_db(conn)
+            upsert_law(conn, LawSource("X001", "建築基準法"), main_root)
+            conn.commit()
+            conn.close()
+
+            payload = cli_search_laws(
+                db_path=pathlib.Path(tf.name),
+                law="建築基準法",
+                article="第2条",
+                limit=10,
+            )
+
+        self.assertEqual(payload["count"], 2)
+        self.assertEqual(
+            [row["article_number"] for row in payload["results"]],
+            ["第2条", "第2条の2"],
+        )
+
     def test_cli_module_runs_with_python_m(self):
         main_root = ET.fromstring(SAMPLE_MAIN_XML)
         order_root = ET.fromstring(SAMPLE_ORDER_XML)

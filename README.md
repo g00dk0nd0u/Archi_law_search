@@ -5,7 +5,7 @@
 - 人間がブラウザUIで手動検索する Web アプリ
 - Codex が CLI 経由で DB 検索し、法令調査や根拠確認に使う運用
 
-このリポジトリは Python 標準ライブラリのみで動作します。HTTPS 接続に必要な CA バンドルは [certs/cacert.pem](/Users/ryokondo/Documents/iMac_Python/Archi_law_search/certs/cacert.pem) を同梱しています。
+このリポジトリは Python 標準ライブラリのみで動作します。HTTPS 接続に必要な CA バンドルは [certs/cacert.pem](certs/cacert.pem) を同梱しています。
 
 ## Webアプリとして使う
 
@@ -34,19 +34,20 @@ python -m cli.search_laws --law "建築基準法" --article 第五十二条 --js
 ```
 
 `--law` は、DB 内に完全一致する法令名があるときは完全一致で検索し、完全一致がないときだけ部分一致にフォールバックします。法令が分かる場合は `--law-id` の使用を推奨します。
+`--article` は前方一致検索です。たとえば `第三十五条` を指定すると、`第三十五条の二` や `第三十五条の三` も含めて確認できます。
 
 ## DBの場所
 
-- 共通DB: [data/laws.db](/Users/ryokondo/Documents/iMac_Python/Archi_law_search/data/laws.db)
+- 共通DB: [data/laws.db](data/laws.db)
 
-現在の DB 収録範囲や運用上の注意は [docs/DB_POLICY.md](/Users/ryokondo/Documents/iMac_Python/Archi_law_search/docs/DB_POLICY.md) を参照してください。
+現在の DB 収録範囲や運用上の注意は [docs/DB_POLICY.md](docs/DB_POLICY.md) を参照してください。
 
 ## docs
 
-- [docs/CODEX_USAGE.md](/Users/ryokondo/Documents/iMac_Python/Archi_law_search/docs/CODEX_USAGE.md)
-- [docs/USER_MANUAL.md](/Users/ryokondo/Documents/iMac_Python/Archi_law_search/docs/USER_MANUAL.md)
-- [docs/DEVELOPMENT.md](/Users/ryokondo/Documents/iMac_Python/Archi_law_search/docs/DEVELOPMENT.md)
-- [docs/DB_POLICY.md](/Users/ryokondo/Documents/iMac_Python/Archi_law_search/docs/DB_POLICY.md)
+- [docs/CODEX_USAGE.md](docs/CODEX_USAGE.md)
+- [docs/USER_MANUAL.md](docs/USER_MANUAL.md)
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
+- [docs/DB_POLICY.md](docs/DB_POLICY.md)
 
 ## テスト
 

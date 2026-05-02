@@ -5,6 +5,7 @@
 ## Webアプリの起動方法
 
 ```bash
+python -m src.prepare_sqlite --db data/laws.db
 python -m src.web_app --db data/laws.db --host 127.0.0.1 --port 8765
 ```
 
@@ -20,6 +21,7 @@ python -m src.web_app --db data/laws.db --host 127.0.0.1 --port 8765
 
 - 例: `第五十二条`
 - 数字表記でも検索できます。
+- 条番号検索は前方一致なので、基準条文と枝番条文をまとめて確認できます。
 - 同じ条番号が複数法令にある場合は、それぞれの法令ごとに結果が表示されます。
 
 ## キーワード検索
