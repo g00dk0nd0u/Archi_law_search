@@ -97,6 +97,16 @@ python -m cli.search_laws --law "建築基準法" --article 第五十二条 --js
 python -m cli.search_laws --query "容積率 前面道路" --limit 10 --json-pretty
 ```
 
+### 原文全文を txt に出力する場合
+
+複数条文や長い条文を扱うときは、チャットには要点だけを書き、原文全文は `--export-txt` で別ファイルに出力できます。
+
+```bash
+python -m cli.search_laws --query "階段" --limit 20 --export-txt outputs/law_refs_stairs.txt
+```
+
+txt には、検索条件、出力日時、各条文の見出し、DB本文がそのまま UTF-8 で保存されます。
+
 ## 回答作成時の注意
 
 - 先にまとめを書きます。

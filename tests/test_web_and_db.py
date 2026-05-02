@@ -35,6 +35,7 @@ from law_registry import DEFAULT_LAWS, LAW_REGISTRY  # type: ignore
 import laws_api  # type: ignore
 from web_app import SEARCH_PAGE_TEMPLATE, SETTINGS_PAGE_TEMPLATE, LawSearchHandler, build_server_url, open_browser  # type: ignore
 from cli.search_laws import search_laws as cli_search_laws  # type: ignore
+from cli.search_laws import build_txt_export_text, export_results_txt  # type: ignore
 
 
 def _maybe_fts_count(conn):
@@ -607,6 +608,46 @@ class DatabaseAndWebTests(unittest.TestCase):
             {row["law_title"] for row in payload["results"]},
             {"建築基準法"},
         )
+
+    def test_cli_search_laws_can_export_txt_with_db_text_unchanged(self):
+        main_root = ET.fromstring(SAMPLE_MAIN_XML)
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as tf, tempfile.TemporaryDirectory() as td:
+            conn = sqlite3.connect(tf.name)
+            init_db(conn)
+            upsert_law(conn, LawSource("X001", "建築基準法"), main_root)
+            conn.commit()
+            conn.close()
+
+            payload = cli_search_laws(
+                db_path=pathlib.Path(tf.name),
+                law="建築基準法",
+                article="第1条",
+                limit=10,
+            )
+            export_path = pathlib.Path(td) / "outputs" / "law_refs.txt"
+            export_results_txt(export_path, payload)
+
+            text = export_path.read_text(encoding="utf-8")
+
+        self.assertIn("法令検索結果 原文出力", text)
+        self.assertIn("検索条件: 法令名=建築基準法 / 条番号=第1条", text)
+        self.assertIn("1. 建築基準法 第1条", text)
+        self.assertIn("耐火構造について定める。", text)
+
+    def test_build_txt_export_text_handles_empty_results(self):
+        text = build_txt_export_text(
+            {
+                "query": "存在しない語",
+                "law": "",
+                "law_id": "",
+                "article": "",
+                "results": [],
+            }
+        )
+
+        self.assertIn("検索条件: 存在しない語", text)
+        self.assertIn("検索結果はありません。", text)
 
     def test_default_registry_contains_only_three_initial_import_targets(self):
         self.assertEqual([law.law_name for law in DEFAULT_LAWS], ["建築基準法", "建築基準法施行令", "建築士法"])

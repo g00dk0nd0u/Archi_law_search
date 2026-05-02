@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime
 import json
 import re
 import sqlite3
@@ -237,6 +238,63 @@ def search_laws(
     }
 
 
+def build_export_search_label(
+    query: str = "",
+    law: str = "",
+    article: str = "",
+    law_id: str = "",
+) -> str:
+    parts = []
+    if query:
+        parts.append(query)
+    if law:
+        parts.append(f"法令名={law}")
+    if article:
+        parts.append(f"条番号={article}")
+    if law_id:
+        parts.append(f"法令ID={law_id}")
+    return " / ".join(parts) if parts else "なし"
+
+
+def build_txt_export_text(payload: dict[str, Any]) -> str:
+    lines = [
+        "法令検索結果 原文出力",
+        f"検索条件: {build_export_search_label(payload.get('query', ''), payload.get('law', ''), payload.get('article', ''), payload.get('law_id', ''))}",
+        f"出力日時: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        "",
+    ]
+
+    results = payload.get("results", [])
+    for index, row in enumerate(results, start=1):
+        law_title = str(row.get("law_title", "") or "")
+        article_number = str(row.get("article_number", "") or "")
+        article_title = str(row.get("article_title", "") or "")
+        article_text = str(row.get("article_text", "") or "")
+        heading = f"{index}. {law_title} {article_number}{article_title}"
+
+        lines.extend(
+            [
+                "=" * 60,
+                heading.strip(),
+                "=" * 60,
+                "",
+                article_text,
+                "",
+            ]
+        )
+
+    if not results:
+        lines.append("検索結果はありません。")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def export_results_txt(export_path: Path, payload: dict[str, Any]) -> Path:
+    export_path.parent.mkdir(parents=True, exist_ok=True)
+    export_path.write_text(build_txt_export_text(payload), encoding="utf-8")
+    return export_path
+
+
 def execute_search(
     conn: sqlite3.Connection,
     schema: dict[str, str],
@@ -418,6 +476,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--article", default="", help="Article number filter, e.g. 第112条.")
     parser.add_argument("--limit", type=int, default=20, help="Result limit. Default: 20.")
     parser.add_argument(
+        "--export-txt",
+        default="",
+        help="Write the matched article texts to a UTF-8 .txt file.",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Output JSON. This is the default format and is kept for explicit CLI usage.",
@@ -444,6 +507,8 @@ def main() -> int:
             law_id=args.law_id,
             limit=args.limit,
         )
+        if args.export_txt:
+            export_results_txt(Path(args.export_txt).expanduser(), payload)
     except KeyboardInterrupt:
         print(json.dumps({"error": "cancelled"}), file=sys.stderr)
         return 130
