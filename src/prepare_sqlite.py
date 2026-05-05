@@ -10,10 +10,12 @@ if __package__ in (None, ""):
 
     sys.path.append(str(Path(__file__).resolve().parent.parent))
     from src.law_database import LawSource, connect_db, init_db, replace_law
+    from src.kokuji_database import ensure_kokuji_schema
     from src.law_registry import DEFAULT_LAWS
     from src.laws_api import fetch_law_xml
 else:
     from .law_database import LawSource, connect_db, init_db, replace_law
+    from .kokuji_database import ensure_kokuji_schema
     from .law_registry import DEFAULT_LAWS
     from .laws_api import fetch_law_xml
 
@@ -35,6 +37,7 @@ def main():
     conn = connect_db(db_path)
     try:
         init_db(conn)
+        ensure_kokuji_schema(conn, rebuild_fts=True)
         total = 0
         for source in sources:
             root = fetch_law_xml(source.law_id, as_of_date=args.asof)
