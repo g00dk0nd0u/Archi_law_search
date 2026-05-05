@@ -5,6 +5,7 @@ Create a ZIP snapshot of this repository for local archive or review.
 - Uses only Python standard library
 - Prefers Git-tracked files, but also includes untracked working files
 - Includes `output/` even when it is gitignored
+- This ZIP is for review handoff, so it does not need to match `.gitignore` exactly
 - Falls back to .gitignore-based scan when Git is unavailable
 - Excludes .git, __pycache__, and local noise
 - Saves ZIP to the user's Downloads folder by default
@@ -36,6 +37,17 @@ DEFAULT_EXCLUDES = {
 FORCE_INCLUDE_DIRS = {
     "output",
 }
+
+
+def should_include_review_output(relative_path: str) -> bool:
+    normalized = relative_path.replace(os.sep, "/")
+    if not normalized.startswith("output/"):
+        return True
+    if not normalized.startswith("output/logs/"):
+        return True
+
+    name = Path(normalized).name
+    return name.startswith("latest_") and name.endswith(".log")
 
 
 def read_gitignore(repo_root: Path) -> list[str]:
@@ -107,7 +119,7 @@ def should_include(path: Path, repo_root: Path, patterns: list[str]) -> bool:
         return False
 
     if is_force_included(str(relative)):
-        return True
+        return should_include_review_output(str(relative))
 
     if is_ignored(str(relative), patterns):
         return False
