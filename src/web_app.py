@@ -2128,14 +2128,12 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             article_number = str(row.get("article_number", "") or "")
             article_title = str(row.get("article_title", "") or "")
             article_text = str(row.get("article_text", "") or "")
-            source = str(row.get("source", "") or "")
             lines.extend(
                 [
                     "=" * 60,
                     f"【{index}】{law_title}",
                     f"条番号: {article_number}",
                     f"見出し: {article_title or 'なし'}",
-                    f"出典: {source or 'laws.db'}",
                     "",
                     article_text,
                     "",
