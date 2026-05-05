@@ -794,6 +794,8 @@ class DatabaseAndWebTests(unittest.TestCase):
     def test_page_template_supports_realtime_search_script(self):
         html_doc = SEARCH_PAGE_TEMPLATE.format(
             query="耐火",
+            query_label="検索キーワード",
+            query_placeholder="例: 容積率、準耐火、第112条",
             law_checked=" checked",
             kokuji_checked="",
             kokuji_disabled="",
@@ -815,6 +817,9 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn("AUTO_SUBMIT_DELAY_MS = 700", html_doc)
         self.assertIn('querySelectorAll("td.body.is-expandable")', html_doc)
         self.assertIn('document.querySelectorAll("input[name=\'source\']")', html_doc)
+        self.assertIn('const sourceConfig = {', html_doc)
+        self.assertIn('告示番号・キーワード', html_doc)
+        self.assertIn('例: 294号、防火設備、準不燃', html_doc)
         self.assertIn('navigator.clipboard.writeText', html_doc)
         self.assertIn('document.querySelectorAll(".copy-button")', html_doc)
         self.assertIn('document.querySelector(".bulk-copy-button")', html_doc)

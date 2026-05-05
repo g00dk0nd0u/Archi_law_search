@@ -12,6 +12,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_KOKUJI_DB_PATH = REPO_ROOT / "data" / "kokuji_notices.db"
 SNIPPET_LENGTH = 220
 SNIPPET_CONTEXT = 90
+FULLWIDTH_DIGIT_TRANS = str.maketrans("０１２３４５６７８９", "0123456789")
+KANJI_DIGITS = {0: "零", 1: "一", 2: "二", 3: "三", 4: "四", 5: "五", 6: "六", 7: "七", 8: "八", 9: "九"}
 
 
 def connect_db(db_path: Path | str) -> sqlite3.Connection:
@@ -99,6 +101,75 @@ def tokenize_query(query: str) -> list[str]:
     return [token for token in re.split(r"[\s\u3000]+", (query or "").strip()) if token]
 
 
+def normalize_ascii_digits(text: str) -> str:
+    return (text or "").translate(FULLWIDTH_DIGIT_TRANS)
+
+
+def int_to_kanji(number: int) -> str:
+    if number == 0:
+        return KANJI_DIGITS[0]
+
+    parts: list[str] = []
+    units = [(1000, "千"), (100, "百"), (10, "十"), (1, "")]
+    remaining = number
+    for value, label in units:
+        digit = remaining // value
+        remaining %= value
+        if digit == 0:
+            continue
+        if value == 1:
+            parts.append(KANJI_DIGITS[digit])
+        elif digit == 1:
+            parts.append(label)
+        else:
+            parts.append(f"{KANJI_DIGITS[digit]}{label}")
+    return "".join(parts)
+
+
+def build_query_variants(token: str) -> list[str]:
+    normalized = normalize_ascii_digits(token.strip())
+    variants: list[str] = []
+    seen: set[str] = set()
+    is_plain_number = bool(re.fullmatch(r"\d+", normalized))
+
+    def add(value: str) -> None:
+        value = value.strip()
+        if value and value not in seen:
+            seen.add(value)
+            variants.append(value)
+
+    if not is_plain_number:
+        add(token)
+        add(normalized)
+
+    number_strings = re.findall(r"\d+", normalized)
+    for number_string in number_strings:
+        number_int = int(number_string)
+        number_kanji = int_to_kanji(number_int)
+        add(f"{number_string}号")
+        add(f"第{number_string}号")
+        add(number_kanji)
+        add(f"{number_kanji}号")
+        add(f"第{number_kanji}号")
+        add(f"告示{number_string}号")
+        add(f"告示第{number_string}号")
+        add(f"告示{number_kanji}号")
+        add(f"告示第{number_kanji}号")
+
+    return variants
+
+
+def build_highlight_terms(query: str) -> list[str]:
+    highlight_terms: list[str] = []
+    seen: set[str] = set()
+    for token in tokenize_query(query):
+        for variant in build_query_variants(token):
+            if variant not in seen:
+                seen.add(variant)
+                highlight_terms.append(variant)
+    return highlight_terms
+
+
 def normalize_whitespace(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
 
@@ -130,24 +201,51 @@ def format_snippet(text: str, terms: list[str]) -> str:
     return snippet[: SNIPPET_LENGTH + 6]
 
 
-def build_like_where_clause(target_columns: list[str], terms: list[str]) -> tuple[str, list[str]]:
+def build_like_where_clause(target_columns: list[str], term_groups: list[list[str]]) -> tuple[str, list[str]]:
     term_clauses: list[str] = []
     params: list[str] = []
-    for term in terms:
-        column_clauses = [f"COALESCE({column}, '') LIKE ?" for column in target_columns]
-        term_clauses.append("(" + " OR ".join(column_clauses) + ")")
-        params.extend([f"%{term}%"] * len(target_columns))
+    for variants in term_groups:
+        variant_clauses: list[str] = []
+        for term in variants:
+            column_clauses = [f"COALESCE({column}, '') LIKE ?" for column in target_columns]
+            variant_clauses.append("(" + " OR ".join(column_clauses) + ")")
+            params.extend([f"%{term}%"] * len(target_columns))
+        term_clauses.append("(" + " OR ".join(variant_clauses) + ")")
     return " AND ".join(term_clauses), params
 
 
-def run_like_search(conn: sqlite3.Connection, schema: dict[str, str], terms: list[str], limit: int) -> list[sqlite3.Row]:
+def build_rank_clause(schema: dict[str, str], highlight_terms: list[str]) -> tuple[str, list[str]]:
+    document_number_col = schema["document_number_col"]
+    notice_name_col = schema["notice_name_col"]
+    full_text_col = schema["full_text_col"]
+    organization_col = schema["organization_col"]
+
+    def column_clause(column: str) -> str:
+        return " OR ".join([f"COALESCE({column}, '') LIKE ?" for _ in highlight_terms]) or "0"
+
+    rank_sql = f"""
+        CASE
+            WHEN ({column_clause(document_number_col)}) THEN 0
+            WHEN ({column_clause(notice_name_col)}) THEN 1
+            WHEN ({column_clause(full_text_col)}) THEN 2
+            WHEN ({column_clause(organization_col)}) THEN 3
+            ELSE 4
+        END
+    """
+    like_params = [f"%{term}%" for term in highlight_terms]
+    return rank_sql, [*like_params, *like_params, *like_params, *like_params]
+
+
+def run_like_search(conn: sqlite3.Connection, schema: dict[str, str], term_groups: list[list[str]], limit: int) -> list[sqlite3.Row]:
     target_columns = [
         schema["notice_name_col"],
         schema["document_number_col"],
         schema["organization_col"],
         schema["full_text_col"],
     ]
-    where_sql, params = build_like_where_clause(target_columns, terms)
+    where_sql, params = build_like_where_clause(target_columns, term_groups)
+    highlight_terms = [variant for variants in term_groups for variant in variants]
+    rank_sql, rank_params = build_rank_clause(schema, highlight_terms)
     return conn.execute(
         f"""
         SELECT
@@ -156,13 +254,14 @@ def run_like_search(conn: sqlite3.Connection, schema: dict[str, str], terms: lis
             COALESCE({schema["document_number_col"]}, '') AS document_number,
             COALESCE({schema["organization_col"]}, '') AS organization,
             COALESCE({schema["url_col"]}, '') AS url,
-            COALESCE({schema["full_text_col"]}, '') AS full_text
+            COALESCE({schema["full_text_col"]}, '') AS full_text,
+            {rank_sql} AS match_rank
         FROM {schema["notices_table"]}
         WHERE {where_sql}
-        ORDER BY row_id
+        ORDER BY match_rank, row_id
         LIMIT ?
         """,
-        [*params, limit],
+        [*rank_params, *params, limit],
     ).fetchall()
 
 
@@ -199,11 +298,13 @@ def search_kokuji(db_path: Path, *, query: str, limit: int = 20) -> dict[str, An
     terms = tokenize_query(query)
     if not terms:
         raise ValueError("query must not be empty")
+    term_groups = [build_query_variants(term) for term in terms]
+    highlight_terms = build_highlight_terms(query)
 
     conn = connect_db(db_path)
     try:
         schema = detect_schema(conn)
-        rows = run_like_search(conn, schema, terms, limit)
+        rows = run_like_search(conn, schema, term_groups, limit)
         mode = "like"
         warnings: list[str] = []
         if not rows and schema["fts_table"] and supports_fts5(conn):
@@ -222,7 +323,7 @@ def search_kokuji(db_path: Path, *, query: str, limit: int = 20) -> dict[str, An
                 "snippet": format_snippet(
                     row["full_text"]
                     or f'{row["notice_name"]} {row["document_number"]} {row["organization"]}',
-                    terms,
+                    highlight_terms,
                 ),
             }
             for row in rows
@@ -236,6 +337,7 @@ def search_kokuji(db_path: Path, *, query: str, limit: int = 20) -> dict[str, An
         "limit": limit,
         "count": len(results),
         "search_mode": mode,
+        "highlight_terms": highlight_terms,
         "warnings": warnings,
         "results": results,
     }
