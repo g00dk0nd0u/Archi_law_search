@@ -2094,15 +2094,8 @@ class LawSearchHandler(BaseHTTPRequestHandler):
     def _fetch_law_download_rows(self, article_query: str, body_query: str) -> list[dict[str, str]]:
         if not Path(self.db_path).exists():
             return []
-        from cli.search_laws import search_laws as cli_search_laws
-
-        payload = cli_search_laws(
-            Path(self.db_path),
-            query=body_query,
-            article=article_query,
-            limit=DOWNLOAD_RESULTS_LIMIT,
-        )
-        return [dict(row) for row in payload.get("results", [])]
+        rows, _warning = self.search_law_inputs(article_query, body_query)
+        return [self._law_download_row_from_search_row(row) for row in rows[:DOWNLOAD_RESULTS_LIMIT]]
 
     def _fetch_kokuji_download_rows(self, notice_number_query: str, body_query: str) -> list[dict[str, str]]:
         state = self._get_kokuji_source_state()
@@ -2149,6 +2142,18 @@ class LawSearchHandler(BaseHTTPRequestHandler):
                 ]
             )
         return "\n".join(lines).rstrip() + "\n"
+
+    @classmethod
+    def _law_download_row_from_search_row(cls, row) -> dict[str, str]:
+        law_name, article_no, _body, full_body, _display_article_html = cls._unpack_result_row(row)
+        article_text = cls._plain_text_for_copy(full_body)
+        return {
+            "law_title": law_name,
+            "article_number": cls._display_article_no(article_no),
+            "article_title": cls._extract_leading_heading(article_text).strip("（）"),
+            "article_text": article_text,
+            "source": "laws.db",
+        }
 
     @classmethod
     def _build_kokuji_download_text(cls, rows: list[dict[str, str]], *, notice_number_query: str, body_query: str) -> str:

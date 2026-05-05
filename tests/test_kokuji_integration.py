@@ -625,6 +625,49 @@ class KokujiIntegrationTests(unittest.TestCase):
             self.assertIn("organization:", kokuji_path.read_text(encoding="utf-8"))
             self.assertEqual(sorted(path.name for path in exports_dir.iterdir()), ["latest_kokuji_search.txt", "latest_law_search.txt"])
 
+    def test_save_results_txt_law_matches_screen_search_count_for_fullwidth_space_and(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = pathlib.Path(tmpdir)
+            exports_dir = tmp_path / "output" / "exports"
+            laws_db = tmp_path / "laws.db"
+            kokuji_db = tmp_path / "kokuji.db"
+            shutil.copyfile(ROOT / "data" / "laws.db", laws_db)
+            create_sample_kokuji_db(kokuji_db, with_native_number_columns=True)
+
+            handler, _captured = self._make_handler(laws_db, kokuji_db)
+            handler.DEFAULT_EXPORTS_DIR = exports_dir
+
+            screen_rows, warning = LawSearchHandler.search_law_inputs(handler, "", "耐火　不燃")
+            law_path, law_count = LawSearchHandler._save_results_txt(
+                handler,
+                source="law",
+                article_query="",
+                notice_number_query="",
+                body_query="耐火　不燃",
+            )
+
+            self.assertEqual(warning, "")
+            self.assertGreater(len(screen_rows), 0)
+            self.assertEqual(law_count, len(screen_rows))
+            text = law_path.read_text(encoding="utf-8")
+            self.assertIn(f"件数: {len(screen_rows)}", text)
+            self.assertNotIn("<mark>", text)
+
+    def test_fetch_law_download_rows_supports_article_query(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = pathlib.Path(tmpdir)
+            laws_db = tmp_path / "laws.db"
+            kokuji_db = tmp_path / "kokuji.db"
+            shutil.copyfile(ROOT / "data" / "laws.db", laws_db)
+            create_sample_kokuji_db(kokuji_db, with_native_number_columns=True)
+
+            handler, _captured = self._make_handler(laws_db, kokuji_db)
+            rows = LawSearchHandler._fetch_law_download_rows(handler, "6", "")
+
+            self.assertGreater(len(rows), 0)
+            self.assertEqual(rows[0]["source"], "laws.db")
+            self.assertTrue(rows[0]["article_number"].endswith("条"))
+
     def test_handle_export_results_opens_exports_and_redirects(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = pathlib.Path(tmpdir)
