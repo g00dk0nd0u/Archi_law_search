@@ -1,157 +1,89 @@
-"""Regression tests for the staged kokuji integration."""
+"""Regression tests for search-only kokuji integration."""
 
 from __future__ import annotations
 
 import pathlib
+import shutil
 import sqlite3
 import subprocess
 import sys
 import tempfile
 import unittest
-from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT / "src"))
 
-from kokuji_database import (  # type: ignore
-    NoticeRow,
-    connect_db,
-    ensure_kokuji_schema,
-    has_kokuji_fts_table,
-    process_notice,
-    search_kokuji,
-    update_notice_status,
-    upsert_notice,
-)
-from law_database import init_db  # type: ignore
+from kokuji_database import connect_db, search_kokuji  # type: ignore
+from source_registry import ensure_source_registry, is_source_active, set_source_active  # type: ignore
+
+
+def create_sample_kokuji_db(db_path: pathlib.Path) -> None:
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            """
+            CREATE TABLE notices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                notice_name TEXT NOT NULL,
+                document_number TEXT,
+                document_date TEXT,
+                organization TEXT,
+                url TEXT UNIQUE,
+                match_reason TEXT,
+                fetch_status TEXT,
+                text_status TEXT,
+                full_text TEXT,
+                text_char_count INTEGER DEFAULT 0,
+                page_count INTEGER DEFAULT 0,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE notice_errors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                notice_id INTEGER,
+                url TEXT,
+                phase TEXT,
+                error_message TEXT,
+                created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO notices(
+                notice_name, document_number, document_date, organization, url,
+                match_reason, fetch_status, text_status, full_text,
+                text_char_count, page_count, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "準不燃材料を定める件",
+                "国土交通省告示第1号",
+                "2026-01-01",
+                "国土交通省住宅局建築指導課",
+                "https://example.com/jun.pdf",
+                "seed",
+                "fetch_ok",
+                "text_ok",
+                "この告示は準不燃材料と建築物の内装制限を定める。",
+                27,
+                2,
+                "2026-01-01T00:00:00+00:00",
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 class KokujiIntegrationTests(unittest.TestCase):
-    def test_ensure_kokuji_schema_keeps_existing_law_tables(self):
-        conn = sqlite3.connect(":memory:")
-        conn.row_factory = sqlite3.Row
-        try:
-            init_db(conn)
-            fts_enabled = ensure_kokuji_schema(conn, rebuild_fts=True)
-
-            self.assertIsNotNone(
-                conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'laws'").fetchone()
-            )
-            self.assertIsNotNone(
-                conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'articles'").fetchone()
-            )
-            self.assertIsNotNone(
-                conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'kokuji_notices'").fetchone()
-            )
-            self.assertIsNotNone(
-                conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'kokuji_notice_errors'").fetchone()
-            )
-            self.assertEqual(fts_enabled, has_kokuji_fts_table(conn))
-        finally:
-            conn.close()
-
-    def test_ensure_kokuji_schema_skips_fts_when_unavailable(self):
-        conn = sqlite3.connect(":memory:")
-        conn.row_factory = sqlite3.Row
-        try:
-            with mock.patch("kokuji_database.supports_fts5", return_value=False):
-                enabled = ensure_kokuji_schema(conn, rebuild_fts=True)
-            self.assertFalse(enabled)
-            self.assertFalse(has_kokuji_fts_table(conn))
-        finally:
-            conn.close()
-
-    def test_process_notice_preserves_existing_full_text_on_fetch_error(self):
-        row = NoticeRow(
-            notice_name="準不燃材料を定める件",
-            document_number="国土交通省告示第1号",
-            document_date="2026-01-01",
-            organization="国土交通省住宅局建築指導課",
-            url="https://example.com/test.pdf",
-            match_reason="seed",
-        )
-        with tempfile.NamedTemporaryFile(suffix=".db") as tf:
-            conn = connect_db(tf.name)
-            try:
-                ensure_kokuji_schema(conn, rebuild_fts=False)
-                notice_id = upsert_notice(conn, row, "2026-01-01T00:00:00+00:00")
-                update_notice_status(
-                    conn,
-                    notice_id,
-                    fetch_status="fetch_ok",
-                    text_status="text_ok",
-                    full_text="old text",
-                    text_char_count=8,
-                    page_count=3,
-                    now_iso="2026-01-01T00:00:00+00:00",
-                )
-                conn.commit()
-
-                with mock.patch("kokuji_database.fetch_notice_document", side_effect=RuntimeError("boom")):
-                    fetch_status, text_status, char_count, page_count = process_notice(
-                        conn,
-                        row,
-                        fts_enabled=False,
-                    )
-
-                stored = conn.execute(
-                    """
-                    SELECT full_text, text_char_count, page_count, fetch_status, text_status
-                    FROM kokuji_notices
-                    WHERE id = ?
-                    """,
-                    (notice_id,),
-                ).fetchone()
-                error_count = conn.execute(
-                    "SELECT COUNT(*) FROM kokuji_notice_errors WHERE notice_id = ?",
-                    (notice_id,),
-                ).fetchone()[0]
-            finally:
-                conn.close()
-
-        self.assertEqual((fetch_status, text_status), ("fetch_error", "skipped"))
-        self.assertEqual((char_count, page_count), (8, 3))
-        self.assertEqual(stored["full_text"], "old text")
-        self.assertEqual(stored["text_char_count"], 8)
-        self.assertEqual(stored["page_count"], 3)
-        self.assertEqual(stored["fetch_status"], "fetch_error")
-        self.assertEqual(stored["text_status"], "skipped")
-        self.assertEqual(error_count, 1)
-
     def test_search_kokuji_uses_like_search(self):
         with tempfile.NamedTemporaryFile(suffix=".db") as tf:
-            conn = connect_db(tf.name)
-            try:
-                ensure_kokuji_schema(conn, rebuild_fts=False)
-                conn.execute(
-                    """
-                    INSERT INTO kokuji_notices(
-                        notice_name, document_number, document_date, organization, url,
-                        match_reason, fetch_status, text_status, full_text,
-                        text_char_count, page_count, created_at, updated_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        "準不燃材料を定める件",
-                        "国土交通省告示第1号",
-                        "2026-01-01",
-                        "国土交通省住宅局建築指導課",
-                        "https://example.com/jun.pdf",
-                        "seed",
-                        "fetch_ok",
-                        "text_ok",
-                        "この告示は準不燃材料と建築物の内装制限を定める。",
-                        27,
-                        2,
-                        "2026-01-01T00:00:00+00:00",
-                        "2026-01-01T00:00:00+00:00",
-                    ),
-                )
-                conn.commit()
-            finally:
-                conn.close()
-
+            create_sample_kokuji_db(pathlib.Path(tf.name))
             payload = search_kokuji(pathlib.Path(tf.name), query="準不燃", limit=10)
 
         self.assertEqual(payload["count"], 1)
@@ -159,23 +91,120 @@ class KokujiIntegrationTests(unittest.TestCase):
         self.assertEqual(payload["results"][0]["notice_name"], "準不燃材料を定める件")
         self.assertIn("準不燃", payload["results"][0]["snippet"])
 
-    def test_make_kokuji_csv_reports_missing_input_clearly(self):
-        missing_path = ROOT / "data" / "does_not_exist_001992597.xlsx"
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(ROOT / "tools" / "make_kokuji_csv.py"),
-                "--input-xlsx",
-                str(missing_path),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Input workbook not found.", result.stdout)
-        self.assertIn(str(missing_path), result.stdout)
-        self.assertIn("data/001992597.xlsx", result.stdout)
+    def test_import_kokuji_db_copies_sqlite_file(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = pathlib.Path(tmpdir)
+            source_db = tmp_path / "source_kokuji.db"
+            dest_db = tmp_path / "dest_kokuji.db"
+            registry_db = tmp_path / "laws.db"
+            create_sample_kokuji_db(source_db)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "tools" / "import_kokuji_db.py"),
+                    "--source",
+                    str(source_db),
+                    "--dest",
+                    str(dest_db),
+                    "--registry-db",
+                    str(registry_db),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0)
+            self.assertTrue(dest_db.exists())
+            conn = connect_db(dest_db)
+            try:
+                count = conn.execute("SELECT COUNT(*) FROM notices").fetchone()[0]
+            finally:
+                conn.close()
+            self.assertEqual(count, 1)
+            self.assertIn("Imported kokuji DB:", result.stdout)
+            self.assertIn("notices: 1", result.stdout)
+
+    def test_import_kokuji_db_fails_when_required_tables_are_missing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = pathlib.Path(tmpdir)
+            source_db = tmp_path / "broken.db"
+            sqlite3.connect(str(source_db)).close()
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "tools" / "import_kokuji_db.py"),
+                    "--source",
+                    str(source_db),
+                    "--dest",
+                    str(tmp_path / "dest.db"),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("missing required tables", result.stdout)
+
+    def test_source_registry_can_toggle_active_state(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as tf:
+            db_path = pathlib.Path(tf.name)
+            conn = sqlite3.connect(str(db_path))
+            try:
+                conn.row_factory = sqlite3.Row
+                ensure_source_registry(conn)
+                conn.commit()
+            finally:
+                conn.close()
+
+            self.assertTrue(is_source_active("kokuji", db_path))
+            set_source_active("kokuji", False, db_path)
+            self.assertFalse(is_source_active("kokuji", db_path))
+            set_source_active("kokuji", True, db_path)
+            self.assertTrue(is_source_active("kokuji", db_path))
+
+    def test_cli_search_kokuji_returns_inactive_payload(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = pathlib.Path(tmpdir)
+            kokuji_db = tmp_path / "kokuji.db"
+            registry_db = tmp_path / "laws.db"
+            create_sample_kokuji_db(kokuji_db)
+            conn = sqlite3.connect(str(registry_db))
+            try:
+                conn.row_factory = sqlite3.Row
+                ensure_source_registry(conn)
+                conn.commit()
+            finally:
+                conn.close()
+            set_source_active("kokuji", False, registry_db)
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "cli.search_kokuji",
+                    "--db",
+                    str(kokuji_db),
+                    "--registry-db",
+                    str(registry_db),
+                    "--query",
+                    "建築物",
+                    "--limit",
+                    "10",
+                    "--json-pretty",
+                ],
+                capture_output=True,
+                text=True,
+                cwd=ROOT,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0)
+            self.assertIn('"inactive": true', result.stdout.lower())
+            self.assertIn("kokuji source is inactive", result.stdout)
 
 
 if __name__ == "__main__":

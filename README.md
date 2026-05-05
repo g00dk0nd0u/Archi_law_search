@@ -1,12 +1,12 @@
 # Archi Law Search
 
-`data/laws.db` を根拠に、建築関連法令と建築系告示本文を検索するためのリポジトリです。用途は 2 つです。
+`data/laws.db` を根拠に建築関連法令を検索し、別DBの `data/kokuji_notices.db` を標準ライブラリ `sqlite3` だけで検索できるようにしたリポジトリです。用途は 2 つです。
 
 - 人間がブラウザUIで手動検索する Web アプリ
 - Codex が CLI 経由で DB 検索し、法令調査や根拠確認に使う運用
 
-通常の法令検索と Web アプリは Python 標準ライブラリのみで動作します。HTTPS 接続に必要な CA バンドルは [certs/cacert.pem](certs/cacert.pem) を同梱しています。
-告示 PDF 更新処理だけは別依存で、[requirements-kokuji.txt](requirements-kokuji.txt) に `requests` / `pypdf` を分離しています。
+通常の法令検索、Web アプリ、告示検索は Python 標準ライブラリのみで動作します。HTTPS 接続に必要な CA バンドルは [certs/cacert.pem](certs/cacert.pem) を同梱しています。
+告示 PDF の取得・本文抽出・DB生成はこのリポジトリでは行わず、別リポジトリ `Kokuji_DB` 側の責務とします。
 
 ## Webアプリとして使う
 
@@ -40,44 +40,32 @@ python -m cli.search_laws --law "建築基準法" --article 第五十二条 --js
 ## DBの場所
 
 - 共通DB: [data/laws.db](data/laws.db)
-- 告示CSV: [data/accepted_kokuji_notices.csv](data/accepted_kokuji_notices.csv)
+- 告示DB: [data/kokuji_notices.db](data/kokuji_notices.db)
 
 現在の DB 収録範囲や運用上の注意は [docs/DB_POLICY.md](docs/DB_POLICY.md) を参照してください。
 
-## Kokuji DB 更新
+## Kokuji DB 取込
 
-告示本文は `data/laws.db` に同居しますが、`laws` / `articles` には混ぜず、`kokuji_*` テーブルで独立管理します。
+告示本文は `data/laws.db` に混ぜず、`data/kokuji_notices.db` を別DBとして同梱します。通常法令DBの再生成・削除・更新時に告示DBを巻き込まないためです。
 
-CSV を作るとき:
-
-```bash
-python tools/make_kokuji_csv.py
-```
-
-既定入力は `data/001992597.xlsx` です。ファイルが無い場合は、入力候補パスを表示して終了します。
-
-差分確認のみ:
+Kokuji_DB 側で生成した DB を取り込むとき:
 
 ```bash
-python tools/update_kokuji_db.py --dry-run
+python3 tools/import_kokuji_db.py --source ../Kokuji_DB/data/kokuji_notices.db
+python3 tools/import_kokuji_db.py --source ../Kokuji_DB/data/kokuji_notices.db --dest data/kokuji_notices.db
 ```
 
-更新実行:
-
-```bash
-python tools/update_kokuji_db.py --apply --limit 3
-```
-
-更新ログは `output/logs/` に timestamp 付きで残り、`output/logs/latest_kokuji_update.log` も毎回更新されます。
+`import_kokuji_db.py` は標準ライブラリのみを使い、取り込み前に最低限の SQLite スキーマ検証を行います。
 
 告示検索 CLI:
 
 ```bash
-python -m cli.search_kokuji --query "準不燃" --limit 10
-python -m cli.search_kokuji --query "建築物" --limit 10 --json-pretty
+python3 -m cli.search_kokuji --query "準不燃" --limit 10
+python3 -m cli.search_kokuji --query "建築物" --limit 10 --json-pretty
 ```
 
-検索は LIKE を主とし、FTS5 が使える環境では補助的に FTS を使います。
+検索は LIKE を主とし、DB内に FTS5 テーブルがある場合だけ補助的に使います。
+`kokuji` を検索対象に含めるかは `source_registry` の `is_active` で切り替えます。inactive でも DB ファイルは削除しません。
 
 ## docs
 

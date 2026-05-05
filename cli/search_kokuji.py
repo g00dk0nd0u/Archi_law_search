@@ -11,18 +11,22 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
-DEFAULT_DB_PATH = REPO_ROOT / "data" / "laws.db"
+DEFAULT_DB_PATH = REPO_ROOT / "data" / "kokuji_notices.db"
+DEFAULT_REGISTRY_DB_PATH = REPO_ROOT / "data" / "laws.db"
 
 if __package__ in (None, ""):
     sys.path.append(str(REPO_ROOT))
     from src.kokuji_database import search_kokuji
+    from src.source_registry import is_source_active
 else:
     from src.kokuji_database import search_kokuji
+    from src.source_registry import is_source_active
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Search kokuji notices in laws.db and output JSON.")
-    parser.add_argument("--db", default=str(DEFAULT_DB_PATH), help="Path to laws.db")
+    parser = argparse.ArgumentParser(description="Search bundled kokuji notices and output JSON.")
+    parser.add_argument("--db", default=str(DEFAULT_DB_PATH), help="Path to kokuji_notices.db")
+    parser.add_argument("--registry-db", default=str(DEFAULT_REGISTRY_DB_PATH), help="Path to source registry DB")
     parser.add_argument("--query", required=True, help="Keyword query for kokuji notices")
     parser.add_argument("--limit", type=int, default=20, help="Maximum number of results")
     parser.add_argument("--json", action="store_true", help="Print compact JSON")
@@ -30,13 +34,36 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def build_inactive_payload(db_path: Path, query: str, limit: int) -> dict[str, object]:
+    return {
+        "db_path": str(db_path),
+        "query": query,
+        "limit": limit,
+        "count": 0,
+        "inactive": True,
+        "search_mode": "inactive",
+        "warnings": [],
+        "results": [],
+        "message": "kokuji source is inactive",
+    }
+
+
 def main() -> int:
     args = parse_args()
-    payload = search_kokuji(
-        Path(args.db),
-        query=args.query,
-        limit=args.limit,
-    )
+    db_path = Path(args.db)
+    registry_db_path = Path(args.registry_db)
+    if not is_source_active("kokuji", registry_db_path):
+        payload = build_inactive_payload(db_path, args.query, args.limit)
+    else:
+        try:
+            payload = search_kokuji(
+                db_path,
+                query=args.query,
+                limit=args.limit,
+            )
+        except (FileNotFoundError, KeyError, ValueError) as exc:
+            print(str(exc))
+            return 1
     if args.json_pretty:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
