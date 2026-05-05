@@ -460,18 +460,30 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       flex-direction: column;
       align-items: flex-start;
       gap: 0.38rem;
+      max-width: 100%;
     }}
+    .kokuji-link-button,
     .kokuji-copy-button {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 4.6rem;
+      max-width: 100%;
       padding: 0.24rem 0.55rem;
-      background: var(--surface-color);
+      background: var(--surface-muted);
       color: var(--link-color);
       border: 1px solid var(--border-button);
       border-radius: 5px;
       font-size: 0.76rem;
       font-weight: 600;
+      line-height: 1.35;
+      text-decoration: none;
     }}
-    .kokuji-copy-button:hover, .kokuji-copy-button:focus {{
-      background: var(--surface-muted);
+    .kokuji-link-button:hover,
+    .kokuji-link-button:focus,
+    .kokuji-copy-button:hover,
+    .kokuji-copy-button:focus {{
+      background: var(--surface-hover);
       border-color: var(--border-input);
       color: var(--text-strong);
       outline: none;
@@ -490,6 +502,9 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       font-size: 0.76rem;
       color: var(--text-subtle);
       line-height: 1.45;
+    }}
+    .kokuji-year {{
+      font-size: 0.72rem;
     }}
     .body-wrap {{
       position: relative;
@@ -2152,7 +2167,11 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         for row in rows:
             url = (row.get("url") or "").strip()
             link_label = row.get("link_label") or detect_link_label(url, row.get("content_type", ""))
-            link_html = f"<a href='{html.escape(url, quote=True)}' target='_blank' rel='noreferrer'>{html.escape(link_label)}</a>" if url else ""
+            link_html = (
+                f"<a class='kokuji-link-button' href='{html.escape(url, quote=True)}' target='_blank' rel='noreferrer'>{html.escape(link_label)}</a>"
+                if url
+                else ""
+            )
             safe_notice_name = self._safe_snippet(row.get("notice_name", ""))
             safe_document_number = self._safe_snippet(
                 row.get("display_document_number_html")
@@ -2167,6 +2186,8 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             safe_snippet = self._safe_snippet(row.get("snippet", ""))
             organization = (row.get("organization") or "").strip()
             organization_html = f"<div class='kokuji-meta'>{html.escape(organization)}</div>" if organization else ""
+            document_year = self._extract_document_year(row.get("document_date", ""))
+            year_html = f"<div class='kokuji-meta kokuji-year'>{html.escape(document_year)}年</div>" if document_year else ""
             row_id = str(row.get("row_id") or "").strip()
             has_full_text = bool((row.get("full_text") or "").strip())
             copy_button_html = ""
@@ -2179,13 +2200,20 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             lines.append(
                 "<tr>"
                 f"<td class='article kokuji-number'>{safe_document_number}</td>"
-                f"<td class='kokuji-name'>{safe_notice_name}{organization_html}</td>"
+                f"<td class='kokuji-name'>{safe_notice_name}{organization_html}{year_html}</td>"
                 f"<td class='body kokuji-snippet'>{safe_snippet}</td>"
                 f"<td class='kokuji-link-cell'>{link_stack}</td>"
                 "</tr>"
             )
         lines.append("</tbody></table>")
         return "\n".join(lines)
+
+    @staticmethod
+    def _extract_document_year(document_date: str) -> str:
+        match = re.match(r"\s*(\d{4})(?:-\d{2}-\d{2})?\s*$", str(document_date or ""))
+        if not match:
+            return ""
+        return match.group(1)
 
     def render_settings_table(self, installed_ids: Set[str]) -> str:
         if not LAW_REGISTRY:

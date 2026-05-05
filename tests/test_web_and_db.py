@@ -873,6 +873,7 @@ class DatabaseAndWebTests(unittest.TestCase):
                     "display_document_number_raw": "国土交通省告示第1436号",
                     "notice_name": "防火設備の構造方法を定める件",
                     "organization": "国土交通省",
+                    "document_date": "2000-04-01",
                     "snippet": "排煙に関する抜粋",
                     "url": "https://example.com/1436.pdf",
                     "link_label": "PDF",
@@ -885,10 +886,36 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertNotIn("<th>種別</th>", table_html)
         self.assertIn("国土交通省告示<br>第1436号", table_html)
         self.assertLess(table_html.index("第1436号"), table_html.index("防火設備の構造方法を定める件"))
+        self.assertIn("class='kokuji-link-button'", table_html)
         self.assertIn(">PDF<", table_html)
         self.assertIn(">全文コピー<", table_html)
+        self.assertLess(table_html.index(">PDF<"), table_html.index(">全文コピー<"))
         self.assertIn("data-notice-id='9'", table_html)
+        self.assertIn("<div class='kokuji-meta'>国土交通省</div>", table_html)
+        self.assertIn("<div class='kokuji-meta kokuji-year'>2000年</div>", table_html)
         self.assertNotIn(">原本<", table_html)
+
+    def test_render_kokuji_table_hides_document_year_when_document_date_is_empty(self):
+        handler = object.__new__(LawSearchHandler)
+        table_html = LawSearchHandler.render_kokuji_table(
+            handler,
+            [
+                {
+                    "row_id": 1,
+                    "display_document_number": "第1号",
+                    "notice_name": "準不燃材料を定める件",
+                    "organization": "国土交通省",
+                    "document_date": "",
+                    "snippet": "抜粋",
+                    "url": "https://example.com/jun.pdf",
+                    "link_label": "PDF",
+                    "full_text": "全文",
+                }
+            ],
+        )
+
+        self.assertIn("<div class='kokuji-meta'>国土交通省</div>", table_html)
+        self.assertNotIn("kokuji-year", table_html)
 
     def test_settings_template_supports_notice_and_table_markup(self):
         html_doc = SETTINGS_PAGE_TEMPLATE.format(notice="<div>ok</div>", rows="<table><tbody></tbody></table>")

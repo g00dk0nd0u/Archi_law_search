@@ -188,6 +188,47 @@ class KokujiIntegrationTests(unittest.TestCase):
 
         self.assertEqual(payload["count"], 1)
         self.assertEqual(payload["results"][0]["document_number"], "国土交通省告示第千四百三十六号")
+        self.assertEqual(payload["results"][0]["document_date"], "2026-02-01")
+
+    def test_search_kokuji_old_db_without_document_date_column_does_not_crash(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as tf:
+            db_path = pathlib.Path(tf.name)
+            create_sample_kokuji_db(db_path, with_native_number_columns=False)
+            with sqlite3.connect(str(db_path)) as conn:
+                conn.executescript(
+                    """
+                    ALTER TABLE notices RENAME TO notices_old;
+                    CREATE TABLE notices (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        notice_name TEXT NOT NULL,
+                        document_number TEXT,
+                        organization TEXT,
+                        url TEXT UNIQUE,
+                        match_reason TEXT,
+                        fetch_status TEXT,
+                        text_status TEXT,
+                        full_text TEXT,
+                        text_char_count INTEGER DEFAULT 0,
+                        page_count INTEGER DEFAULT 0,
+                        updated_at TEXT NOT NULL
+                    );
+                    INSERT INTO notices (
+                        id, notice_name, document_number, organization, url,
+                        match_reason, fetch_status, text_status, full_text,
+                        text_char_count, page_count, updated_at
+                    )
+                    SELECT
+                        id, notice_name, document_number, organization, url,
+                        match_reason, fetch_status, text_status, full_text,
+                        text_char_count, page_count, updated_at
+                    FROM notices_old;
+                    DROP TABLE notices_old;
+                    """
+                )
+            payload = search_kokuji(db_path, notice_number="1436", limit=10)
+
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["results"][0]["document_date"], "")
 
     def test_search_kokuji_cli_supports_notice_number_option(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -239,6 +280,7 @@ class KokujiIntegrationTests(unittest.TestCase):
             LawSearchHandler._handle_search_page(handler, parsed)
 
         self.assertIn("第<mark>1436</mark>号", captured["html"])
+        self.assertIn("class='kokuji-link-button'", captured["html"])
         self.assertIn(">PDF<", captured["html"])
         self.assertNotIn("種別", captured["html"])
 
@@ -409,8 +451,12 @@ class KokujiIntegrationTests(unittest.TestCase):
             self.assertIn("<mark>準不燃</mark>", captured["html"])
             self.assertIn("告示番号", captured["html"])
             self.assertIn("検索キーワード", captured["html"])
+            self.assertIn("<div class='kokuji-meta'>国土交通省住宅局建築指導課</div>", captured["html"])
+            self.assertIn("<div class='kokuji-meta kokuji-year'>2026年</div>", captured["html"])
+            self.assertIn("class='kokuji-link-button'", captured["html"])
             self.assertIn(">PDF<", captured["html"])
             self.assertIn(">全文コピー<", captured["html"])
+            self.assertLess(captured["html"].index(">PDF<"), captured["html"].index(">全文コピー<"))
             self.assertIn(">TXT保存<", captured["html"])
 
     def test_web_ui_law_results_show_txt_download_button(self):

@@ -29,7 +29,7 @@ python -m src.web_app --db data/laws.db --host 127.0.0.1 --port 8765
 - `source=kokuji` に対して `article=1436` のような旧URLが来た場合も、`notice_number` の代替として扱います
 - `source` 未指定または不正値は `law` 扱いです
 - 結果バー右側の `TXT保存` は、現在の検索結果全文を `output/exports/latest_law_search.txt` または `output/exports/latest_kokuji_search.txt` に上書き保存します
-- 告示結果のリンク列では、`PDF` / `HTML` / `LINK` の下に `全文コピー` が表示され、必要な本文だけ個別コピーできます
+- 告示結果のリンク列では、`PDF` / `HTML` / `DOCX` / `XLSX` / `LINK` を小さなボタン風UIで表示し、その下に `全文コピー` を並べます
 - 告示番号は `国土交通省告示<br>第1119号` のように `第〜号` の直前で改行表示します
 
 - `source=law` のときは `data/laws.db` を検索します
