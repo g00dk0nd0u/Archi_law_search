@@ -28,6 +28,9 @@ python -m src.web_app --db data/laws.db --host 127.0.0.1 --port 8765
 - `source=kokuji` では `notice_number` に告示番号、`q` にキーワードを入れます
 - `source=kokuji` に対して `article=1436` のような旧URLが来た場合も、`notice_number` の代替として扱います
 - `source` 未指定または不正値は `law` 扱いです
+- 結果バー右側の `TXT保存` は、現在の検索結果全文を `output/exports/latest_law_search.txt` または `output/exports/latest_kokuji_search.txt` に上書き保存します
+- 告示結果のリンク列では、`PDF` / `HTML` / `LINK` の下に `全文コピー` が表示され、必要な本文だけ個別コピーできます
+- 告示番号は `国土交通省告示<br>第1119号` のように `第〜号` の直前で改行表示します
 
 - `source=law` のときは `data/laws.db` を検索します
 - `source=kokuji` のときは `data/kokuji_notices.db` を検索します
@@ -41,10 +44,12 @@ python -m src.web_app --db data/laws.db --host 127.0.0.1 --port 8765
 python -m cli.search_laws --query "容積率" --limit 10
 python -m cli.search_laws --law-id 325AC0000000201 --article 第五十二条 --json-pretty
 python -m cli.search_laws --law "建築基準法" --article 第五十二条 --json-pretty
+python -m cli.search_laws --query "容積率" --export-txt
 ```
 
 `--law` は、DB 内に完全一致する法令名があるときは完全一致で検索し、完全一致がないときだけ部分一致にフォールバックします。法令が分かる場合は `--law-id` の使用を推奨します。
 `--article` は前方一致検索です。たとえば `第三十五条` を指定すると、`第三十五条の二` や `第三十五条の三` も含めて確認できます。
+`--export-txt` を引数なしで付けると、`output/exports/latest_law_search.txt` に保存します。明示パス指定時はそのパスを優先します。
 
 ## DBの場所
 

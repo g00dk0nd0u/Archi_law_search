@@ -662,7 +662,7 @@ class DatabaseAndWebTests(unittest.TestCase):
             conn.commit()
             conn.close()
 
-            export_path = ROOT / "output" / "law_refs.txt"
+            export_path = ROOT / "output" / "exports" / "law_refs.txt"
             if export_path.exists():
                 export_path.unlink()
             result = subprocess.run(
@@ -694,7 +694,7 @@ class DatabaseAndWebTests(unittest.TestCase):
 
                 payload = json.loads(result.stdout)
                 self.assertEqual(payload["count"], 1)
-                self.assertEqual(payload["export_txt"], "output/law_refs.txt")
+                self.assertEqual(payload["export_txt"], "output/exports/law_refs.txt")
                 self.assertEqual(
                     payload["results"],
                     [
@@ -805,8 +805,9 @@ class DatabaseAndWebTests(unittest.TestCase):
             kokuji_checked="",
             kokuji_disabled="",
             source_note="",
+            search_notice="",
             meta="1件ヒット",
-            meta_actions="<button class='bulk-copy-button'>全結果をコピー</button>",
+            meta_actions="<a class='text-download-button'>TXT保存</a>",
             table="<div>ok</div>",
         )
         self.assertIn('document.documentElement.dataset.theme = theme;', html_doc)
@@ -831,12 +832,15 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn('name="q"', html_doc)
         self.assertIn('navigator.clipboard.writeText', html_doc)
         self.assertIn('document.querySelectorAll(".copy-button")', html_doc)
-        self.assertIn('document.querySelector(".bulk-copy-button")', html_doc)
+        self.assertIn('document.querySelectorAll(".kokuji-copy-button")', html_doc)
+        self.assertIn('/api/kokuji_text?id=', html_doc)
         self.assertIn('feedback.textContent = "コピー済み"', html_doc)
         self.assertIn('feedback.hidden = false', html_doc)
         self.assertIn("meta-actions", html_doc)
         self.assertIn('class="theme-toggle"', html_doc)
-        self.assertIn(">全結果をコピー<", html_doc)
+        self.assertIn(">TXT保存<", html_doc)
+        self.assertIn(".source-switch-wrap", html_doc)
+        self.assertIn("align-items: flex-end;", html_doc)
         self.assertIn("--table-head-bg: #1a2e4a;", html_doc)
         self.assertIn("--table-head-text: #ffffff;", html_doc)
         self.assertIn("--mark-text: inherit;", html_doc)
@@ -864,20 +868,26 @@ class DatabaseAndWebTests(unittest.TestCase):
             handler,
             [
                 {
+                    "row_id": 9,
                     "display_document_number": "第1436号",
+                    "display_document_number_raw": "国土交通省告示第1436号",
                     "notice_name": "防火設備の構造方法を定める件",
                     "organization": "国土交通省",
                     "snippet": "排煙に関する抜粋",
                     "url": "https://example.com/1436.pdf",
                     "link_label": "PDF",
+                    "full_text": "全文",
                 }
             ],
         )
 
         self.assertIn("<th>告示番号</th><th>告示名</th><th>抜粋</th><th>リンク</th>", table_html)
         self.assertNotIn("<th>種別</th>", table_html)
+        self.assertIn("国土交通省告示<br>第1436号", table_html)
         self.assertLess(table_html.index("第1436号"), table_html.index("防火設備の構造方法を定める件"))
         self.assertIn(">PDF<", table_html)
+        self.assertIn(">全文コピー<", table_html)
+        self.assertIn("data-notice-id='9'", table_html)
         self.assertNotIn(">原本<", table_html)
 
     def test_settings_template_supports_notice_and_table_markup(self):
@@ -996,7 +1006,7 @@ class DatabaseAndWebTests(unittest.TestCase):
         )
         self.assertNotIn("<mark>", text)
 
-    def test_render_meta_actions_shows_bulk_copy_button_only_when_rows_exist(self):
+    def test_render_meta_actions_builds_download_link_for_active_query(self):
         handler = object.__new__(LawSearchHandler)
         html_with_rows = LawSearchHandler._render_meta_actions(
             handler,
@@ -1004,17 +1014,35 @@ class DatabaseAndWebTests(unittest.TestCase):
             article_query="第1条",
             body_query="耐火",
         )
-        html_without_rows = LawSearchHandler._render_meta_actions(handler, [])
-
-        self.assertIn("class='bulk-copy-button'", html_with_rows)
-        self.assertIn("class='copy-feedback'", html_with_rows)
-        self.assertIn("全結果をコピー", html_with_rows)
-        self.assertIn("検索条件", html_with_rows)
-        self.assertEqual(html_without_rows, "")
-        self.assertEqual(
-            LawSearchHandler._render_meta_actions(handler, [{"notice_name": "告示"}], source="kokuji"),
-            "",
+        html_kokuji = LawSearchHandler._render_meta_actions(
+            handler,
+            [{"notice_name": "告示"}],
+            notice_number_query="1436",
+            body_query="排煙",
+            source="kokuji",
         )
+        html_without_query = LawSearchHandler._render_meta_actions(handler, [])
+
+        self.assertIn("class='text-download-button'", html_with_rows)
+        self.assertIn("/export_results?source=law", html_with_rows)
+        self.assertIn("article=%E7%AC%AC1%E6%9D%A1", html_with_rows)
+        self.assertIn("q=%E8%80%90%E7%81%AB", html_with_rows)
+        self.assertIn("/export_results?source=kokuji", html_kokuji)
+        self.assertIn("notice_number=1436", html_kokuji)
+        self.assertIn("q=%E6%8E%92%E7%85%99", html_kokuji)
+        self.assertEqual(html_without_query, "")
+
+    def test_format_notice_number_display_breaks_before_number(self):
+        self.assertEqual(
+            LawSearchHandler._format_notice_number_display("国土交通省告示第1119号"),
+            "国土交通省告示<br>第1119号",
+        )
+        self.assertEqual(LawSearchHandler._format_notice_number_display("第1436号"), "第1436号")
+
+    def test_safe_snippet_preserves_br_and_mark(self):
+        safe = LawSearchHandler._safe_snippet("国土交通省告示<br><mark>第1436号</mark>")
+        self.assertIn("<br>", safe)
+        self.assertIn("<mark>第1436号</mark>", safe)
 
     def test_build_bulk_copy_text_uses_none_for_missing_conditions(self):
         text = LawSearchHandler._build_bulk_copy_text([], article_query="", body_query="")

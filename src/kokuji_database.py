@@ -469,6 +469,38 @@ def detect_link_label(url: str, content_type: str = "") -> str:
     }.get(extension, "LINK")
 
 
+def get_kokuji_text_by_id(db_path: Path | str, notice_id: int) -> dict[str, str]:
+    if notice_id <= 0:
+        raise ValueError("notice_id must be greater than 0")
+
+    conn = connect_db(db_path)
+    try:
+        schema = detect_schema(conn)
+        row = conn.execute(
+            f"""
+            SELECT
+                {schema["row_id_col"]} AS row_id,
+                COALESCE({schema["notice_name_col"]}, '') AS notice_name,
+                COALESCE({schema["full_text_col"]}, '') AS full_text
+            FROM {schema["notices_table"]}
+            WHERE {schema["row_id_col"]} = ?
+            LIMIT 1
+            """,
+            (notice_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if row is None:
+        raise KeyError("notice was not found")
+
+    return {
+        "row_id": str(row["row_id"] or ""),
+        "notice_name": str(row["notice_name"] or ""),
+        "full_text": str(row["full_text"] or ""),
+    }
+
+
 def search_kokuji(
     db_path: Path,
     *,
@@ -509,6 +541,7 @@ def search_kokuji(
                 warnings.append("FTS search was unavailable. Returning LIKE-only results.")
         results = [
             {
+                "row_id": int(row["row_id"]),
                 "notice_name": row["notice_name"],
                 "document_number": row["document_number"],
                 "document_number_norm": row["document_number_norm"],
@@ -518,6 +551,7 @@ def search_kokuji(
                 "url": row["url"],
                 "content_type": row["content_type"],
                 "link_label": detect_link_label(row["url"], row["content_type"]),
+                "full_text": row["full_text"],
                 "snippet": format_snippet(
                     row["full_text"]
                     or " ".join(

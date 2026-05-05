@@ -14,8 +14,8 @@ from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
-DEFAULT_EXPORT_DIR = REPO_ROOT / "output"
-DEFAULT_EXPORT_FILENAME = "law_search_results.txt"
+DEFAULT_EXPORT_DIR = REPO_ROOT / "output" / "exports"
+DEFAULT_EXPORT_FILENAME = "latest_law_search.txt"
 DEFAULT_DB_CANDIDATES = (
     SCRIPT_DIR / "laws.db",
     SCRIPT_DIR.parent / "data" / "laws.db",
@@ -526,7 +526,7 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         const=DEFAULT_EXPORT_FILENAME,
         default="",
-        help="Write matched article texts to a UTF-8 .txt file. If omitted, output/law_search_results.txt is used.",
+        help="Write matched article texts to a UTF-8 .txt file. If omitted, output/exports/latest_law_search.txt is used.",
     )
     parser.add_argument(
         "--json",

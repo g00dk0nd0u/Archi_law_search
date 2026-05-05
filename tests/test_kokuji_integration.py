@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import pathlib
 import shutil
 import sqlite3
@@ -9,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT / "src"))
@@ -236,7 +238,7 @@ class KokujiIntegrationTests(unittest.TestCase):
             parsed = type("Parsed", (), {"query": "source=kokuji&article=1436&q=%E6%8E%92%E7%85%99"})()
             LawSearchHandler._handle_search_page(handler, parsed)
 
-        self.assertIn("第1436号", captured["html"])
+        self.assertIn("第<mark>1436</mark>号", captured["html"])
         self.assertIn(">PDF<", captured["html"])
         self.assertNotIn("種別", captured["html"])
 
@@ -400,7 +402,7 @@ class KokujiIntegrationTests(unittest.TestCase):
 
             self.assertIn("材料を定める件", captured["html"])
             self.assertIn(">告示<", captured["html"])
-            self.assertIn("国土交通省告示第1号", captured["html"])
+            self.assertIn("国土交通省告示<br>第1号", captured["html"])
             self.assertIn("name=\"source\" value=\"kokuji\" checked", captured["html"])
             self.assertNotIn("<th>条</th>", captured["html"])
             self.assertNotIn("<th>機関</th>", captured["html"])
@@ -408,6 +410,23 @@ class KokujiIntegrationTests(unittest.TestCase):
             self.assertIn("告示番号", captured["html"])
             self.assertIn("検索キーワード", captured["html"])
             self.assertIn(">PDF<", captured["html"])
+            self.assertIn(">全文コピー<", captured["html"])
+            self.assertIn(">TXT保存<", captured["html"])
+
+    def test_web_ui_law_results_show_txt_download_button(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = pathlib.Path(tmpdir)
+            laws_db = tmp_path / "laws.db"
+            kokuji_db = tmp_path / "kokuji.db"
+            shutil.copyfile(ROOT / "data" / "laws.db", laws_db)
+            create_sample_kokuji_db(kokuji_db)
+
+            handler, captured = self._make_handler(laws_db, kokuji_db)
+            parsed = type("Parsed", (), {"query": "article=112&q=%E9%98%B2%E7%81%AB&source=law"})()
+            LawSearchHandler._handle_search_page(handler, parsed)
+
+            self.assertIn(">TXT保存<", captured["html"])
+            self.assertIn("/export_results?source=law", captured["html"])
 
     def test_web_ui_kokuji_number_search_highlights_notice_fields(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -421,7 +440,9 @@ class KokujiIntegrationTests(unittest.TestCase):
             parsed = type("Parsed", (), {"query": "notice_number=1436%E5%8F%B7&source=kokuji"})()
             LawSearchHandler._handle_search_page(handler, parsed)
 
+            self.assertIn("国土交通省告示<br>第千四百三十六号", captured["html"])
             self.assertIn("<mark>第千四百三十六号</mark>", captured["html"])
+            self.assertNotIn("<mark>第</mark>", captured["html"])
             self.assertIn("防火設備", captured["html"])
             self.assertNotIn("<th>機関</th>", captured["html"])
 
@@ -467,6 +488,111 @@ class KokujiIntegrationTests(unittest.TestCase):
             self.assertIn("告示検索は現在無効です", captured["html"])
             self.assertIn('name="source" value="kokuji" checked disabled', captured["html"])
             self.assertIn("告示検索は現在無効です。", captured["html"])
+
+    def test_kokuji_text_api_returns_full_text(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = pathlib.Path(tmpdir)
+            laws_db = tmp_path / "laws.db"
+            kokuji_db = tmp_path / "kokuji.db"
+            sqlite3.connect(str(laws_db)).close()
+            create_sample_kokuji_db(kokuji_db)
+
+            handler, _captured = self._make_handler(laws_db, kokuji_db)
+            payload_holder: dict[str, object] = {}
+
+            def fake_send_json(payload, status=200):
+                payload_holder["payload"] = payload
+                payload_holder["status"] = status
+
+            handler._send_json = fake_send_json
+            parsed = type("Parsed", (), {"query": "id=1"})()
+            LawSearchHandler._handle_kokuji_text_api(handler, parsed)
+
+            self.assertEqual(payload_holder["status"], 200)
+            payload = payload_holder["payload"]
+            self.assertEqual(payload["row_id"], "1")
+            self.assertIn("準不燃材料", payload["notice_name"])
+            self.assertIn("準不燃材料", payload["full_text"])
+
+    def test_save_results_txt_uses_output_exports_latest_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = pathlib.Path(tmpdir)
+            exports_dir = tmp_path / "output" / "exports"
+            laws_db = tmp_path / "laws.db"
+            kokuji_db = tmp_path / "kokuji.db"
+            shutil.copyfile(ROOT / "data" / "laws.db", laws_db)
+            create_sample_kokuji_db(kokuji_db, with_native_number_columns=True)
+
+            handler, _captured = self._make_handler(laws_db, kokuji_db)
+            handler.DEFAULT_EXPORTS_DIR = exports_dir
+
+            law_path, law_count = LawSearchHandler._save_results_txt(
+                handler,
+                source="law",
+                article_query="",
+                notice_number_query="",
+                body_query="容積率",
+            )
+            kokuji_path, kokuji_count = LawSearchHandler._save_results_txt(
+                handler,
+                source="kokuji",
+                article_query="",
+                notice_number_query="1436",
+                body_query="排煙",
+            )
+            law_path_2, _law_count_2 = LawSearchHandler._save_results_txt(
+                handler,
+                source="law",
+                article_query="",
+                notice_number_query="",
+                body_query="容積率",
+            )
+
+            self.assertEqual(law_path.parent, exports_dir)
+            self.assertEqual(kokuji_path.parent, exports_dir)
+            self.assertEqual(law_path.name, "latest_law_search.txt")
+            self.assertEqual(kokuji_path.name, "latest_kokuji_search.txt")
+            self.assertEqual(law_path_2, law_path)
+            self.assertGreater(law_count, 0)
+            self.assertGreater(kokuji_count, 0)
+            self.assertIn("法令検索結果", law_path.read_text(encoding="utf-8"))
+            self.assertIn("告示検索結果", kokuji_path.read_text(encoding="utf-8"))
+            self.assertIn("organization:", kokuji_path.read_text(encoding="utf-8"))
+            self.assertEqual(sorted(path.name for path in exports_dir.iterdir()), ["latest_kokuji_search.txt", "latest_law_search.txt"])
+
+    def test_handle_export_results_opens_exports_and_redirects(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = pathlib.Path(tmpdir)
+            laws_db = tmp_path / "laws.db"
+            kokuji_db = tmp_path / "kokuji.db"
+            sqlite3.connect(str(laws_db)).close()
+            create_sample_kokuji_db(kokuji_db, with_native_number_columns=True)
+
+            handler, _captured = self._make_handler(laws_db, kokuji_db)
+            sent: dict[str, object] = {}
+
+            def fake_send_response(code):
+                sent["code"] = code
+
+            def fake_send_header(name, value):
+                sent.setdefault("headers", {})[name] = value
+
+            handler.send_response = fake_send_response
+            handler.send_header = fake_send_header
+            handler.end_headers = lambda: sent.setdefault("ended", True)
+
+            export_path = tmp_path / "output" / "exports" / "latest_kokuji_search.txt"
+            with mock.patch.object(handler, "_save_results_txt", return_value=(export_path, 1)) as save_mock:
+                with mock.patch.object(handler, "_open_exports_folder") as open_mock:
+                    parsed = type("Parsed", (), {"query": "notice_number=1436&q=%E6%8E%92%E7%85%99&source=kokuji"})()
+                    LawSearchHandler._handle_export_results(handler, parsed)
+
+            save_mock.assert_called_once()
+            open_mock.assert_called_once_with(export_path.parent)
+            self.assertEqual(sent["code"], 303)
+            self.assertIn("Location", sent["headers"])
+            self.assertIn("message=TXT%E3%82%92%E4%BF%9D%E5%AD%98%E3%81%97%E3%81%BE%E3%81%97%E3%81%9F", sent["headers"]["Location"])
+            self.assertIn("output%2Fexports%2Flatest_kokuji_search.txt", sent["headers"]["Location"])
 
 
 if __name__ == "__main__":

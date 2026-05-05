@@ -13,3 +13,5 @@
 - このリポジトリでは `data/kokuji_notices.db` を読み取り専用の検索対象として扱います。
 - `source_registry` で `kokuji` を active / inactive 切替できますが、inactive でも DB ファイルは削除しません。
 - 告示検索では、`document_number_norm` / `document_number_digits` がある場合はそれらを優先し、ない場合は `document_number` / `notice_name` / `full_text` にフォールバックして、古いDBでも検索UIが落ちないようにします。
+- 長文確認用の標準テキスト出力先は `output/exports/` とし、Web UI の `TXT保存` は `latest_law_search.txt` / `latest_kokuji_search.txt` を上書きします。
+- `python -m cli.search_laws --export-txt` も同じ思想で使い、引数なしなら `output/exports/latest_law_search.txt` を標準出力先とします。

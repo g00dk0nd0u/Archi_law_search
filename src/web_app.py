@@ -3,9 +3,13 @@
 import argparse
 from contextlib import closing
 import html
+import json
+import os
 from pathlib import Path
 import re
 import sqlite3
+import subprocess
+import sys
 import threading
 import time
 import webbrowser
@@ -15,14 +19,14 @@ from typing import List, Optional, Set, Tuple
 from urllib.parse import parse_qs, urlencode, urlparse
 
 if __package__ in (None, ""):
-    from kokuji_database import DEFAULT_KOKUJI_DB_PATH, detect_link_label, get_kokuji_db_status, search_kokuji
+    from kokuji_database import DEFAULT_KOKUJI_DB_PATH, detect_link_label, get_kokuji_db_status, get_kokuji_text_by_id, search_kokuji
     from law_database import LawSource, connect_db, delete_law, ensure_db, fts5_enabled, law_exists, list_installed_law_ids, replace_law
     from law_registry import LAW_BY_ID, LAW_REGISTRY
     from laws_api import fetch_law_xml
     from number_text_utils import int_to_kanji, normalize_num, normalize_separators
     from source_registry import get_source_status
 else:
-    from .kokuji_database import DEFAULT_KOKUJI_DB_PATH, detect_link_label, get_kokuji_db_status, search_kokuji
+    from .kokuji_database import DEFAULT_KOKUJI_DB_PATH, detect_link_label, get_kokuji_db_status, get_kokuji_text_by_id, search_kokuji
     from .law_database import LawSource, connect_db, delete_law, ensure_db, fts5_enabled, law_exists, list_installed_law_ids, replace_law
     from .law_registry import LAW_BY_ID, LAW_REGISTRY
     from .laws_api import fetch_law_xml
@@ -31,6 +35,8 @@ else:
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "laws.db"
 DEFAULT_KOKUJI_PATH = DEFAULT_KOKUJI_DB_PATH
+DEFAULT_EXPORTS_DIR = Path(__file__).resolve().parent.parent / "output" / "exports"
+DOWNLOAD_RESULTS_LIMIT = 100
 
 SEARCH_PAGE_TEMPLATE = """<!doctype html>
 <html lang=\"ja\">
@@ -239,17 +245,26 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       color: var(--placeholder-color);
     }}
     .source-switch-wrap {{
-      display: grid;
+      display: flex;
+      flex-direction: column;
       gap: 0.3rem;
       margin-left: auto;
-      justify-items: end;
+      align-items: flex-end;
+      justify-content: flex-end;
       min-width: 11rem;
       align-self: end;
     }}
     .search-submit {{
       flex: 0 0 auto;
       align-self: end;
-      min-height: 2rem;
+      min-height: 2.35rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }}
+    .source-switch-label {{
+      align-self: stretch;
+      text-align: right;
     }}
     .source-switch {{
       display: inline-flex;
@@ -261,6 +276,7 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       padding: 0.18rem;
       gap: 0.2rem;
       flex-wrap: nowrap;
+      min-height: 2.35rem;
     }}
     .source-option {{
       position: relative;
@@ -306,6 +322,20 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       color: var(--text-subtle);
       text-align: right;
     }}
+    .source-note:empty {{ display: none; }}
+    .search-notice {{
+      margin: 0 0 0.6rem;
+      background: var(--surface-muted);
+      border: 1px solid var(--border-soft);
+      border-radius: 6px;
+      padding: 0.45rem 0.7rem;
+      font-size: 0.84rem;
+      color: var(--text-muted);
+    }}
+    .search-notice.is-error {{
+      border-color: var(--feedback-border);
+      color: var(--text-strong);
+    }}
     button, .action-button {{
       padding: 0.45rem 1.05rem;
       background: var(--accent-color);
@@ -344,7 +374,7 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       flex-shrink: 0;
       position: relative;
     }}
-    .bulk-copy-button {{
+    .text-download-button {{
       padding: 0.32rem 0.72rem;
       background: var(--surface-color);
       color: var(--link-color);
@@ -353,13 +383,13 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       font-size: 0.8rem;
       font-weight: 600;
     }}
-    .bulk-copy-button:hover, .bulk-copy-button:focus {{
+    .text-download-button:hover, .text-download-button:focus {{
       background: var(--surface-muted);
       border-color: var(--border-input);
       color: var(--text-strong);
       outline: none;
     }}
-    .bulk-copy-button[hidden] {{ display: none; }}
+    .text-download-button[hidden] {{ display: none; }}
     .copy-feedback {{
       position: absolute;
       top: 50%;
@@ -409,15 +439,51 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       white-space: normal;
       line-height: 1.6;
       font-weight: 600;
+      width: 26%;
     }}
     .kokuji-number {{
-      width: 10rem;
+      width: 16%;
       white-space: normal;
       line-height: 1.5;
       font-variant-numeric: tabular-nums;
     }}
     .kokuji-snippet {{
+      width: 48%;
       min-width: 20rem;
+    }}
+    .kokuji-link-cell {{
+      white-space: nowrap;
+      width: 10%;
+    }}
+    .kokuji-link-stack {{
+      display: inline-flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.38rem;
+    }}
+    .kokuji-copy-button {{
+      padding: 0.24rem 0.55rem;
+      background: var(--surface-color);
+      color: var(--link-color);
+      border: 1px solid var(--border-button);
+      border-radius: 5px;
+      font-size: 0.76rem;
+      font-weight: 600;
+    }}
+    .kokuji-copy-button:hover, .kokuji-copy-button:focus {{
+      background: var(--surface-muted);
+      border-color: var(--border-input);
+      color: var(--text-strong);
+      outline: none;
+    }}
+    .kokuji-copy-button:disabled {{
+      cursor: not-allowed;
+      opacity: 0.5;
+    }}
+    .kokuji-copy-feedback {{
+      position: static;
+      transform: none;
+      font-size: 0.72rem;
     }}
     .kokuji-meta {{
       margin-top: 0.28rem;
@@ -519,7 +585,7 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
         <input id=\"q\" type=\"text\" name=\"q\" value=\"{body_query}\" placeholder=\"{query_placeholder}\" />
       </div>
       <div class=\"source-switch-wrap\">
-        <label>検索対象</label>
+        <label class=\"source-switch-label\">検索対象</label>
         <div class=\"source-switch\">
           <label class=\"source-option\">
             <input type=\"radio\" name=\"source\" value=\"law\"{law_checked} />
@@ -535,6 +601,7 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       <button type=\"submit\" class=\"search-submit\">検索</button>
     </div>
   </form>
+  {search_notice}
   <div class=\"meta\">
     <strong>{meta}</strong>
     <div class=\"meta-actions\">{meta_actions}</div>
@@ -794,12 +861,43 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
         }});
       }});
 
-      const bulkCopyButton = document.querySelector(".bulk-copy-button");
-      if (bulkCopyButton) {{
-        bulkCopyButton.addEventListener("click", async function (event) {{
-          await handleCopyButtonClick(bulkCopyButton, event);
+      document.querySelectorAll(".kokuji-copy-button").forEach(function (button) {{
+        button.addEventListener("click", async function (event) {{
+          event.preventDefault();
+          event.stopPropagation();
+          if (button.disabled) {{
+            return;
+          }}
+          const noticeId = button.getAttribute("data-notice-id") || button.getAttribute("data-kokuji-id");
+          if (!noticeId) {{
+            return;
+          }}
+          const feedback = button.parentElement ? button.parentElement.querySelector(".kokuji-copy-feedback") : null;
+          try {{
+            const response = await fetch("/api/kokuji_text?id=" + encodeURIComponent(noticeId));
+            if (!response.ok) {{
+              throw new Error("fetch failed");
+            }}
+            const payload = await response.json();
+            await copyText(payload.full_text || "");
+            if (feedback) {{
+              feedback.textContent = "コピー済み";
+              feedback.hidden = false;
+              window.setTimeout(function () {{
+                feedback.hidden = true;
+              }}, 1200);
+            }}
+          }} catch (_error) {{
+            if (feedback) {{
+              feedback.textContent = "失敗";
+              feedback.hidden = false;
+              window.setTimeout(function () {{
+                feedback.hidden = true;
+              }}, 1200);
+            }}
+          }}
         }});
-      }}
+      }});
     }});
   </script>
 </body>
@@ -1137,11 +1235,18 @@ class LawSearchHandler(BaseHTTPRequestHandler):
     kokuji_db_path = str(DEFAULT_KOKUJI_PATH)
     LAW_DISPLAY_LABELS = {}
     VALID_SOURCES = {"law", "kokuji"}
+    DEFAULT_EXPORTS_DIR = DEFAULT_EXPORTS_DIR
 
     def do_GET(self):
         parsed = urlparse(self.path)
         if parsed.path == "/":
             self._handle_search_page(parsed)
+            return
+        if parsed.path == "/api/kokuji_text":
+            self._handle_kokuji_text_api(parsed)
+            return
+        if parsed.path in {"/download_results", "/export_results"}:
+            self._handle_export_results(parsed)
             return
         if parsed.path == "/settings":
             self._handle_settings_page(parsed)
@@ -1163,6 +1268,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         requested_source = self._parse_source(parsed.query)
         source = self._resolve_source(requested_source)
         article_query, notice_number_query, body_query = self._parse_search_inputs(parsed.query)
+        message, message_kind = self._parse_flash_message(parsed.query)
         number_query = notice_number_query if source == "kokuji" else article_query
         if source == "kokuji" and not notice_number_query and article_query:
             notice_number_query = article_query
@@ -1195,11 +1301,65 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             kokuji_checked=" checked" if source == "kokuji" else "",
             kokuji_disabled=" disabled" if not source_state["enabled"] else "",
             source_note=html.escape(source_state["note"]),
+            search_notice=self._render_search_notice(message, message_kind),
             meta=html.escape(meta),
-            meta_actions=self._render_meta_actions(rows, article_query, body_query, source=source),
+            meta_actions=self._render_meta_actions(
+                source=source,
+                article_query=article_query,
+                notice_number_query=notice_number_query,
+                body_query=body_query,
+            ),
             table=self.render_results(rows, source=source, empty_message=self._empty_message_for_source(source, source_state)),
         ).encode("utf-8")
         self._send_html(body)
+
+    def _handle_kokuji_text_api(self, parsed):
+        params = parse_qs(parsed.query)
+        notice_id_raw = params.get("id", [""])[0].strip()
+        try:
+            notice_id = int(notice_id_raw)
+            payload = get_kokuji_text_by_id(Path(self.kokuji_db_path), notice_id)
+        except (ValueError, KeyError, FileNotFoundError, sqlite3.DatabaseError):
+            self._send_json({"error": "not found"}, status=HTTPStatus.NOT_FOUND)
+            return
+        self._send_json(payload)
+
+    def _handle_export_results(self, parsed):
+        source = self._parse_source(parsed.query)
+        article_query, notice_number_query, body_query = self._parse_search_inputs(parsed.query)
+        if source == "kokuji" and not notice_number_query and article_query:
+            notice_number_query = article_query
+
+        try:
+            export_path, result_count = self._save_results_txt(
+                source=source,
+                article_query=article_query,
+                notice_number_query=notice_number_query,
+                body_query=body_query,
+            )
+        except Exception as exc:
+            self._redirect_to_search(parsed.query, "error", f"TXT保存に失敗しました: {exc}")
+            return
+
+        if export_path is None:
+            self._redirect_to_search(parsed.query, "error", "TXT保存に失敗しました。")
+            return
+
+        self._open_exports_folder(export_path.parent)
+        export_label = self._display_export_path(export_path)
+        message = f"TXTを保存しました: {export_label}"
+        if result_count == 0:
+            message = f"検索結果は0件でした。TXTを保存しました: {export_label}"
+        self._redirect_to_search(parsed.query, "info", message)
+
+    def _redirect_to_search(self, query_string: str, kind: str, message: str):
+        params = parse_qs(query_string, keep_blank_values=True)
+        params["kind"] = [kind]
+        params["message"] = [message]
+        encoded = urlencode(params, doseq=True)
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", f"/?{encoded}")
+        self.end_headers()
 
     def _handle_settings_page(self, parsed):
         params = parse_qs(parsed.query)
@@ -1267,6 +1427,14 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_json(self, payload: dict[str, object], status: HTTPStatus = HTTPStatus.OK):
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _redirect_with_message(self, kind: str, message: str):
         query = urlencode({"kind": kind, "message": message})
         self.send_response(HTTPStatus.SEE_OTHER)
@@ -1291,8 +1459,20 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         return parse_qs(payload)
 
     @staticmethod
+    def _parse_flash_message(query_string: str) -> Tuple[str, str]:
+        params = parse_qs(query_string)
+        return params.get("message", [""])[0].strip(), params.get("kind", ["info"])[0].strip()
+
+    @staticmethod
     def _render_notice(message: str, kind: str) -> str:
         css_class = "notice is-error" if kind == "error" else "notice"
+        return f"<div class='{css_class}'>{html.escape(message)}</div>"
+
+    @staticmethod
+    def _render_search_notice(message: str, kind: str) -> str:
+        if not message:
+            return ""
+        css_class = "search-notice is-error" if kind == "error" else "search-notice"
         return f"<div class='{css_class}'>{html.escape(message)}</div>"
 
     @staticmethod
@@ -1441,9 +1621,18 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         except (FileNotFoundError, KeyError, ValueError):
             return [], "告示DBを開けません"
         highlight_terms = payload.get("highlight_terms", [])
+        notice_digits = "".join(re.findall(r"\d+", normalize_num(notice_number_query or "")))
+        number_highlight_terms = [notice_digits] if notice_digits else []
         rows = [
             {
                 **row,
+                "display_document_number_raw": row.get("display_document_number", ""),
+                "document_number_raw": row.get("document_number", ""),
+                "document_number_norm_raw": row.get("document_number_norm", ""),
+                "display_document_number_html": self._highlight_text_multi(
+                    self._format_notice_number_display(row.get("display_document_number", "")),
+                    number_highlight_terms,
+                ),
                 "notice_name": self._highlight_text_multi(row.get("notice_name", ""), highlight_terms),
                 "display_document_number": self._highlight_text_multi(row.get("display_document_number", ""), highlight_terms),
                 "document_number": self._highlight_text_multi(row.get("document_number", ""), highlight_terms),
@@ -1567,9 +1756,19 @@ class LawSearchHandler(BaseHTTPRequestHandler):
     def _safe_snippet(snippet_text: str) -> str:
         placeholder_open = "__MARK_OPEN__"
         placeholder_close = "__MARK_CLOSE__"
-        safe = (snippet_text or "").replace("<mark>", placeholder_open).replace("</mark>", placeholder_close)
+        placeholder_br = "__LINE_BREAK__"
+        safe = (
+            (snippet_text or "")
+            .replace("<mark>", placeholder_open)
+            .replace("</mark>", placeholder_close)
+            .replace("<br>", placeholder_br)
+        )
         safe = html.escape(safe)
-        return safe.replace(placeholder_open, "<mark>").replace(placeholder_close, "</mark>")
+        return (
+            safe.replace(placeholder_open, "<mark>")
+            .replace(placeholder_close, "</mark>")
+            .replace(placeholder_br, "<br>")
+        )
 
     @staticmethod
     def _plain_text_for_copy(text: str) -> str:
@@ -1590,6 +1789,164 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         if not blocks:
             return "\n".join(condition_lines)
         return "\n".join(condition_lines) + "\n\n" + "\n\n".join(blocks)
+
+    @staticmethod
+    def _strip_markup(text: str) -> str:
+        return re.sub(r"<[^>]+>", "", text or "")
+
+    @classmethod
+    def _format_notice_number_display(cls, document_number: str) -> str:
+        text = cls._strip_markup(document_number).strip()
+        if not text:
+            return ""
+        return re.sub(r"(.+)(第[^第]+号)$", r"\1<br>\2", text, count=1)
+
+    def _exports_dir(self) -> Path:
+        return self.DEFAULT_EXPORTS_DIR
+
+    def _export_path_for_source(self, source: str) -> Path:
+        filename = "latest_kokuji_search.txt" if source == "kokuji" else "latest_law_search.txt"
+        return self._exports_dir() / filename
+
+    @staticmethod
+    def _open_exports_folder(exports_dir: Path) -> None:
+        try:
+            if sys.platform.startswith("darwin"):
+                subprocess.run(["open", str(exports_dir)], check=False)
+            elif os.name == "nt":
+                os.startfile(str(exports_dir))
+            else:
+                subprocess.run(["xdg-open", str(exports_dir)], check=False)
+        except Exception:
+            return
+
+    @staticmethod
+    def _display_export_path(export_path: Path) -> str:
+        repo_root = Path(__file__).resolve().parent.parent
+        try:
+            return str(export_path.relative_to(repo_root))
+        except ValueError:
+            return str(export_path)
+
+    def _save_results_txt(
+        self,
+        *,
+        source: str,
+        article_query: str,
+        notice_number_query: str,
+        body_query: str,
+    ) -> Tuple[Optional[Path], int]:
+        normalized_source = self._normalize_source(source)
+        if normalized_source == "kokuji":
+            rows = self._fetch_kokuji_download_rows(notice_number_query, body_query)
+            export_path = self._export_path_for_source("kokuji")
+            export_path.parent.mkdir(parents=True, exist_ok=True)
+            export_path.write_text(
+                self._build_kokuji_download_text(rows, notice_number_query=notice_number_query, body_query=body_query),
+                encoding="utf-8",
+            )
+            return export_path, len(rows)
+
+        rows = self._fetch_law_download_rows(article_query, body_query)
+        export_path = self._export_path_for_source("law")
+        export_path.parent.mkdir(parents=True, exist_ok=True)
+        export_path.write_text(
+            self._build_law_download_text(rows, article_query=article_query, body_query=body_query),
+            encoding="utf-8",
+        )
+        return export_path, len(rows)
+
+    def _fetch_law_download_rows(self, article_query: str, body_query: str) -> list[dict[str, str]]:
+        if not Path(self.db_path).exists():
+            return []
+        from cli.search_laws import search_laws as cli_search_laws
+
+        payload = cli_search_laws(
+            Path(self.db_path),
+            query=body_query,
+            article=article_query,
+            limit=DOWNLOAD_RESULTS_LIMIT,
+        )
+        return [dict(row) for row in payload.get("results", [])]
+
+    def _fetch_kokuji_download_rows(self, notice_number_query: str, body_query: str) -> list[dict[str, str]]:
+        state = self._get_kokuji_source_state()
+        if not state["enabled"]:
+            return []
+        try:
+            payload = search_kokuji(
+                Path(self.kokuji_db_path),
+                query=body_query,
+                notice_number=notice_number_query,
+                limit=DOWNLOAD_RESULTS_LIMIT,
+            )
+        except (FileNotFoundError, KeyError, ValueError, sqlite3.DatabaseError):
+            return []
+        return [dict(row) for row in payload.get("results", [])]
+
+    @classmethod
+    def _build_law_download_text(cls, rows: list[dict[str, str]], *, article_query: str, body_query: str) -> str:
+        lines = [
+            "法令検索結果",
+            "",
+            "検索条件",
+            f"条番号: {article_query or 'なし'}",
+            f"検索キーワード: {body_query or 'なし'}",
+            f"件数: {len(rows)}",
+            "",
+        ]
+        for index, row in enumerate(rows, start=1):
+            law_title = str(row.get("law_title", "") or "")
+            article_number = str(row.get("article_number", "") or "")
+            article_title = str(row.get("article_title", "") or "")
+            article_text = str(row.get("article_text", "") or "")
+            source = str(row.get("source", "") or "")
+            lines.extend(
+                [
+                    "=" * 60,
+                    f"【{index}】{law_title}",
+                    f"条番号: {article_number}",
+                    f"見出し: {article_title or 'なし'}",
+                    f"出典: {source or 'laws.db'}",
+                    "",
+                    article_text,
+                    "",
+                ]
+            )
+        return "\n".join(lines).rstrip() + "\n"
+
+    @classmethod
+    def _build_kokuji_download_text(cls, rows: list[dict[str, str]], *, notice_number_query: str, body_query: str) -> str:
+        lines = [
+            "告示検索結果",
+            "",
+            "検索条件",
+            f"告示番号: {notice_number_query or 'なし'}",
+            f"検索キーワード: {body_query or 'なし'}",
+            f"件数: {len(rows)}",
+            "",
+        ]
+        for index, row in enumerate(rows, start=1):
+            document_number = str(
+                row.get("display_document_number")
+                or row.get("document_number_norm")
+                or row.get("document_number")
+                or (f"{row.get('document_number_digits', '')}号" if row.get("document_number_digits") else "")
+                or ""
+            )
+            lines.extend(
+                [
+                    "=" * 60,
+                    f"【{index}】{document_number or '番号不明'}",
+                    f"告示名: {str(row.get('notice_name', '') or '')}",
+                    f"organization: {str(row.get('organization', '') or '')}",
+                    f"URL: {str(row.get('url', '') or '')}",
+                    "",
+                    str(row.get("full_text", "") or ""),
+                    "",
+                ]
+            )
+        return "\n".join(lines).rstrip() + "\n"
 
     @staticmethod
     def _extract_leading_heading(body_text: str, max_scan_length: int = 240, max_heading_length: int = 80) -> str:
@@ -1662,15 +2019,27 @@ class LawSearchHandler(BaseHTTPRequestHandler):
     def _display_law_name(cls, law_name: str, provision_kind: str) -> str:
         return cls.LAW_DISPLAY_LABELS.get((law_name, provision_kind), law_name)
 
-    def _render_meta_actions(self, rows, article_query: str = "", body_query: str = "", source: str = "law") -> str:
-        if not rows or source != "law":
+    def _render_meta_actions(
+        self,
+        rows=None,
+        article_query: str = "",
+        notice_number_query: str = "",
+        body_query: str = "",
+        source: str = "law",
+    ) -> str:
+        normalized_source = self._normalize_source(source)
+        number_field = "notice_number" if normalized_source == "kokuji" else "article"
+        number_value = notice_number_query if normalized_source == "kokuji" else article_query
+        if not number_value and not body_query:
             return ""
-        copy_text = html.escape(self._build_bulk_copy_text(rows, article_query, body_query), quote=True)
-        return (
-            f"<span class='copy-feedback' hidden>コピー済み</span>"
-            f"<button type='button' class='bulk-copy-button' title='全結果をコピー' "
-            f"data-copy-text='{copy_text}'>全結果をコピー</button>"
+        href = "/export_results?" + urlencode(
+            {
+                "source": normalized_source,
+                number_field: number_value,
+                "q": body_query,
+            }
         )
+        return f"<a class='text-download-button' href='{html.escape(href, quote=True)}'>TXT保存</a>"
 
     @classmethod
     def _format_result_rows(cls, rows, body_index: int = 3, full_body_index: Optional[int] = None):
@@ -1785,16 +2154,34 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             link_label = row.get("link_label") or detect_link_label(url, row.get("content_type", ""))
             link_html = f"<a href='{html.escape(url, quote=True)}' target='_blank' rel='noreferrer'>{html.escape(link_label)}</a>" if url else ""
             safe_notice_name = self._safe_snippet(row.get("notice_name", ""))
-            safe_document_number = self._safe_snippet(row.get("display_document_number", ""))
+            safe_document_number = self._safe_snippet(
+                row.get("display_document_number_html")
+                or self._format_notice_number_display(
+                    row.get("display_document_number_raw")
+                    or row.get("document_number_norm_raw")
+                    or row.get("document_number_raw")
+                    or row.get("display_document_number")
+                    or ""
+                )
+            )
             safe_snippet = self._safe_snippet(row.get("snippet", ""))
             organization = (row.get("organization") or "").strip()
             organization_html = f"<div class='kokuji-meta'>{html.escape(organization)}</div>" if organization else ""
+            row_id = str(row.get("row_id") or "").strip()
+            has_full_text = bool((row.get("full_text") or "").strip())
+            copy_button_html = ""
+            if row_id and has_full_text:
+                copy_button_html = (
+                    f"<button type='button' class='kokuji-copy-button' data-notice-id='{html.escape(row_id, quote=True)}' data-kokuji-id='{html.escape(row_id, quote=True)}'>全文コピー</button>"
+                    "<span class='kokuji-copy-feedback' hidden>コピー済み</span>"
+                )
+            link_stack = f"<div class='kokuji-link-stack'>{link_html}{copy_button_html}</div>" if (link_html or copy_button_html) else ""
             lines.append(
                 "<tr>"
                 f"<td class='article kokuji-number'>{safe_document_number}</td>"
                 f"<td class='kokuji-name'>{safe_notice_name}{organization_html}</td>"
                 f"<td class='body kokuji-snippet'>{safe_snippet}</td>"
-                f"<td>{link_html}</td>"
+                f"<td class='kokuji-link-cell'>{link_stack}</td>"
                 "</tr>"
             )
         lines.append("</tbody></table>")
