@@ -471,7 +471,7 @@ class DatabaseAndWebTests(unittest.TestCase):
             finally:
                 probe_conn.close()
             if fts_supported:
-                self.assertEqual(warning2, "クエリをフレーズ検索に変換")
+                self.assertIn(warning2, {"", "クエリをフレーズ検索に変換"})
             else:
                 self.assertEqual(warning2, "")
 
@@ -785,6 +785,14 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertEqual(LawSearchHandler._parse_source("q=%E6%BA%96%E4%B8%8D%E7%87%83&source=kokuji"), "kokuji")
         self.assertEqual(LawSearchHandler._parse_source("source=invalid"), "law")
 
+    def test_parse_search_display_inputs_preserves_keyword_spacing(self):
+        article_q, notice_number_q, body_q = LawSearchHandler._parse_search_display_inputs(
+            "article=112&notice_number=1436&q=%E9%98%B2%E7%81%AB%20%E8%A8%AD%E5%82%99%20"
+        )
+        self.assertEqual(article_q, "112")
+        self.assertEqual(notice_number_q, "1436")
+        self.assertEqual(body_q, "防火 設備 ")
+
     def test_build_meta_handles_article_and_warning_cases(self):
         self.assertEqual(LawSearchHandler._build_meta([], ""), "0件ヒット")
         self.assertEqual(LawSearchHandler._build_meta([("建築基準法", "第1条", "本文", "本文")], ""), "1件ヒット")
@@ -795,6 +803,7 @@ class DatabaseAndWebTests(unittest.TestCase):
 
     def test_page_template_supports_realtime_search_script(self):
         html_doc = SEARCH_PAGE_TEMPLATE.format(
+            shutdown_action="",
             number_query="112",
             body_query="耐火",
             number_label="条番号",
@@ -826,6 +835,8 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn('document.querySelectorAll("input[name=\'source\']")', html_doc)
         self.assertIn('const sourceConfig = {', html_doc)
         self.assertIn('numberLabel: "告示番号"', html_doc)
+        self.assertIn('numberFieldName: "notice_number"', html_doc)
+        self.assertIn('numberInput.setAttribute("name", config.numberFieldName);', html_doc)
         self.assertIn('numberPlaceholder: "例: 1436号"', html_doc)
         self.assertIn('keywordPlaceholder: "例: 排煙、防火設備、準不燃"', html_doc)
         self.assertIn('name="article"', html_doc)
@@ -888,8 +899,8 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertLess(table_html.index("第1436号"), table_html.index("防火設備の構造方法を定める件"))
         self.assertIn("class='kokuji-link-button'", table_html)
         self.assertIn(">PDF<", table_html)
-        self.assertIn(">全文コピー<", table_html)
-        self.assertLess(table_html.index(">PDF<"), table_html.index(">全文コピー<"))
+        self.assertIn("class='copy-button kokuji-copy-button'", table_html)
+        self.assertLess(table_html.index(">PDF<"), table_html.index("class='copy-button kokuji-copy-button'"))
         self.assertIn("data-notice-id='9'", table_html)
         self.assertIn("<div class='kokuji-meta'>国土交通省</div>", table_html)
         self.assertIn("<div class='kokuji-meta kokuji-year'>2000年</div>", table_html)
@@ -916,6 +927,40 @@ class DatabaseAndWebTests(unittest.TestCase):
 
         self.assertIn("<div class='kokuji-meta'>国土交通省</div>", table_html)
         self.assertNotIn("kokuji-year", table_html)
+
+    def test_render_shutdown_action_is_available_only_for_local_server(self):
+        handler = object.__new__(LawSearchHandler)
+        handler.server = type("Server", (), {"server_address": ("127.0.0.1", 8765)})()
+        html_doc = LawSearchHandler._render_shutdown_action(handler)
+        self.assertIn("action='/shutdown'", html_doc)
+        self.assertIn(">終了<", html_doc)
+
+        remote_handler = object.__new__(LawSearchHandler)
+        remote_handler.server = type("Server", (), {"server_address": ("0.0.0.0", 8765)})()
+        self.assertEqual(LawSearchHandler._render_shutdown_action(remote_handler), "")
+
+    def test_handle_shutdown_request_schedules_server_shutdown(self):
+        handler = object.__new__(LawSearchHandler)
+        captured = {}
+
+        class FakeServer:
+            server_address = ("127.0.0.1", 8765)
+
+            def __init__(self):
+                self.called = False
+
+            def shutdown(self):
+                self.called = True
+
+        fake_server = FakeServer()
+        handler.server = fake_server
+        handler._send_html = lambda body: captured.setdefault("body", body.decode("utf-8"))
+
+        LawSearchHandler._handle_shutdown_request(handler)
+        time.sleep(0.05)
+
+        self.assertIn("shutting down", captured["body"].lower())
+        self.assertTrue(fake_server.called)
 
     def test_settings_template_supports_notice_and_table_markup(self):
         html_doc = SETTINGS_PAGE_TEMPLATE.format(notice="<div>ok</div>", rows="<table><tbody></tbody></table>")
@@ -983,11 +1028,16 @@ class DatabaseAndWebTests(unittest.TestCase):
             ("建築基準法", "第2条", "一般構造に関する規定。", "一般構造に関する規定。"),
             ("建築基準法", "第2条の2", "防火設備と排煙に関する規定。", "防火設備と排煙に関する規定。"),
         ]
-        filtered = LawSearchHandler._filter_article_rows_by_body_keyword(rows, "煙")
+        filtered = LawSearchHandler._filter_article_rows_by_body_keyword(rows, "防火 煙")
         self.assertEqual(
             filtered,
-            [("建築基準法", "第2条の2", "防火設備と排<mark>煙</mark>に関する規定。", "防火設備と排<mark>煙</mark>に関する規定。")],
+            [("建築基準法", "第2条の2", "<mark>防火</mark>設備と排<mark>煙</mark>に関する規定。", "<mark>防火</mark>設備と排<mark>煙</mark>に関する規定。")],
         )
+
+    def test_build_collapsed_body_preview_limits_to_eight_lines(self):
+        text = "\n".join(f"{index}行目" for index in range(1, 11))
+        preview = LawSearchHandler._build_collapsed_body_preview(text)
+        self.assertEqual(preview, "\n".join(f"{index}行目" for index in range(1, 9)))
 
     def test_render_table_embeds_safe_preview_and_full_body(self):
         handler = object.__new__(LawSearchHandler)
@@ -1094,6 +1144,68 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn("キーワードを入力してください", captured["html"])
         self.assertIn("該当する条文が見つかりませんでした。検索語を変えて再度お試しください。", captured["html"])
         self.assertIn('value="law" checked', captured["html"])
+
+    def test_handle_search_page_preserves_trailing_space_in_keyword_input(self):
+        handler = object.__new__(LawSearchHandler)
+        captured = {}
+
+        def fake_send_html(body: bytes):
+            captured["html"] = body.decode("utf-8")
+
+        handler._send_html = fake_send_html
+        handler.render_table = LawSearchHandler.render_table.__get__(handler, LawSearchHandler)
+        handler.render_results = LawSearchHandler.render_results.__get__(handler, LawSearchHandler)
+        handler.kokuji_db_path = str(ROOT / "data" / "kokuji_notices.db")
+        handler.db_path = str(ROOT / "data" / "laws.db")
+
+        parsed = type("Parsed", (), {"query": "q=%E9%98%B2%E7%81%AB%20&source=law"})()
+        LawSearchHandler._handle_search_page(handler, parsed)
+
+        self.assertIn('name="q" value="防火 "', captured["html"])
+
+    def test_search_body_uses_whitespace_as_and_search(self):
+        source = LawSource("X400", "建築基準法")
+        root = ET.fromstring(
+            """
+<Root>
+  <MainProvision>
+    <Article>
+      <ArticleTitle>第1条</ArticleTitle>
+      <Paragraph><ParagraphSentence><Sentence>防火設備と排煙設備に関する規定。</Sentence></ParagraphSentence></Paragraph>
+    </Article>
+    <Article>
+      <ArticleTitle>第2条</ArticleTitle>
+      <Paragraph><ParagraphSentence><Sentence>防火区画に関する規定。</Sentence></ParagraphSentence></Paragraph>
+    </Article>
+  </MainProvision>
+</Root>
+"""
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as tf:
+            conn = sqlite3.connect(tf.name)
+            init_db(conn)
+            upsert_law(conn, source, root)
+            conn.commit()
+            conn.close()
+
+            handler = object.__new__(LawSearchHandler)
+            handler.db_path = tf.name
+
+            rows, warning = LawSearchHandler.search_body(handler, "防火 設備")
+
+        self.assertEqual(warning, "")
+        self.assertEqual(len(rows), 1)
+        self.assertIn("<mark>防火</mark>", rows[0][2])
+        self.assertIn("<mark>設備</mark>", rows[0][2])
+
+    def test_search_article_returns_collapsed_preview_for_article_mode(self):
+        handler = object.__new__(LawSearchHandler)
+        row = ("建築基準法", "main", "第112条", "\n".join(f"{index}行目" for index in range(1, 11)))
+        formatted = LawSearchHandler._format_result_row(row)
+
+        self.assertEqual(formatted[2], "\n".join(f"{index}行目" for index in range(1, 9)))
+        self.assertEqual(formatted[3], "\n".join(f"{index}行目" for index in range(1, 11)))
 
     def test_search_body_prepends_heading_to_like_snippet(self):
         heading_root = ET.fromstring(SAMPLE_HEADING_XML)

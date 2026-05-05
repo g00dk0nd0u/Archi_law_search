@@ -284,6 +284,21 @@ class KokujiIntegrationTests(unittest.TestCase):
         self.assertIn(">PDF<", captured["html"])
         self.assertNotIn("種別", captured["html"])
 
+    def test_handle_search_page_accepts_notice_number_when_switching_back_to_law_mode(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = pathlib.Path(tmpdir)
+            laws_db = tmp_path / "laws.db"
+            kokuji_db = tmp_path / "kokuji.db"
+            shutil.copyfile(ROOT / "data" / "laws.db", laws_db)
+            create_sample_kokuji_db(kokuji_db, with_native_number_columns=True)
+            handler, captured = self._make_handler(laws_db, kokuji_db)
+
+            parsed = type("Parsed", (), {"query": "source=law&notice_number=112&q=%E9%98%B2%E7%81%AB"})()
+            LawSearchHandler._handle_search_page(handler, parsed)
+
+        self.assertIn('name="article" value="112"', captured["html"])
+        self.assertIn('name="source" value="law" checked', captured["html"])
+
     def test_import_kokuji_db_copies_sqlite_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = pathlib.Path(tmpdir)
@@ -455,8 +470,8 @@ class KokujiIntegrationTests(unittest.TestCase):
             self.assertIn("<div class='kokuji-meta kokuji-year'>2026年</div>", captured["html"])
             self.assertIn("class='kokuji-link-button'", captured["html"])
             self.assertIn(">PDF<", captured["html"])
-            self.assertIn(">全文コピー<", captured["html"])
-            self.assertLess(captured["html"].index(">PDF<"), captured["html"].index(">全文コピー<"))
+            self.assertIn("class='copy-button kokuji-copy-button'", captured["html"])
+            self.assertLess(captured["html"].index(">PDF<"), captured["html"].index("class='copy-button kokuji-copy-button'"))
             self.assertIn(">TXT保存<", captured["html"])
 
     def test_web_ui_law_results_show_txt_download_button(self):

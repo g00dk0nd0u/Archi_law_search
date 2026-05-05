@@ -165,6 +165,9 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       align-items: center;
       gap: 0.6rem;
     }}
+    .header-actions form {{
+      margin: 0;
+    }}
     .nav-link {{
       display: inline-flex;
       align-items: center;
@@ -181,6 +184,9 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
     }}
     .nav-link:hover {{ background: var(--surface-muted); }}
+    .shutdown-link {{
+      background: var(--surface-soft);
+    }}
     .theme-toggle {{
       width: 2rem;
       min-width: 2rem;
@@ -432,9 +438,26 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
     }}
     tbody tr:nth-child(even) {{ background: var(--surface-soft); }}
     tbody tr:hover {{ background: var(--surface-hover); }}
-    .law {{ white-space: nowrap; color: var(--accent-color); font-weight: 600; width: 6rem; }}
-    .article {{ white-space: nowrap; width: 6rem; font-variant-numeric: tabular-nums; }}
-    .body {{ white-space: pre-wrap; line-height: 1.72; font-size: 0.9rem; }}
+    .law {{
+      width: 17%;
+      white-space: normal;
+      color: var(--accent-color);
+      font-weight: 600;
+      line-height: 1.58;
+    }}
+    .article {{
+      width: 11%;
+      white-space: normal;
+      line-height: 1.5;
+      font-variant-numeric: tabular-nums;
+    }}
+    .body {{
+      width: 72%;
+      min-width: 20rem;
+      white-space: pre-wrap;
+      line-height: 1.72;
+      font-size: 0.9rem;
+    }}
     .kokuji-name {{
       white-space: normal;
       line-height: 1.6;
@@ -462,8 +485,7 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       gap: 0.38rem;
       max-width: 100%;
     }}
-    .kokuji-link-button,
-    .kokuji-copy-button {{
+    .kokuji-link-button {{
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -488,12 +510,18 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       color: var(--text-strong);
       outline: none;
     }}
+    .kokuji-link-stack .copy-button {{
+      position: static;
+      flex: 0 0 auto;
+    }}
     .kokuji-copy-button:disabled {{
       cursor: not-allowed;
       opacity: 0.5;
     }}
     .kokuji-copy-feedback {{
       position: static;
+      top: auto;
+      right: auto;
       transform: none;
       font-size: 0.72rem;
     }}
@@ -586,6 +614,7 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       <button type=\"button\" class=\"theme-toggle\" data-theme-toggle aria-label=\"テーマ切替\" title=\"ダークモードに切替\">
         <span class=\"theme-toggle-icon\" aria-hidden=\"true\">☾</span>
       </button>
+      {shutdown_action}
       <a class=\"nav-link\" href=\"/settings\">Settings</a>
     </div>
   </div>
@@ -677,11 +706,13 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       const sourceConfig = {{
         law: {{
           numberLabel: "条番号",
+          numberFieldName: "article",
           numberPlaceholder: "例: 112",
           keywordPlaceholder: "例: 防火、容積率、準耐火",
         }},
         kokuji: {{
           numberLabel: "告示番号",
+          numberFieldName: "notice_number",
           numberPlaceholder: "例: 1436号",
           keywordPlaceholder: "例: 排煙、防火設備、準不燃",
         }},
@@ -693,6 +724,7 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
         if (numberLabel) {{
           numberLabel.textContent = config.numberLabel;
         }}
+        numberInput.setAttribute("name", config.numberFieldName);
         numberInput.setAttribute("placeholder", config.numberPlaceholder);
         queryInput.setAttribute("placeholder", config.keywordPlaceholder);
       }};
@@ -1270,6 +1302,9 @@ class LawSearchHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
+        if parsed.path == "/shutdown":
+            self._handle_shutdown_request()
+            return
         if parsed.path != "/settings/action":
             self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
             return
@@ -1283,11 +1318,20 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         requested_source = self._parse_source(parsed.query)
         source = self._resolve_source(requested_source)
         article_query, notice_number_query, body_query = self._parse_search_inputs(parsed.query)
+        display_article_query, display_notice_number_query, display_body_query = self._parse_search_display_inputs(parsed.query)
         message, message_kind = self._parse_flash_message(parsed.query)
         number_query = notice_number_query if source == "kokuji" else article_query
+        display_number_query = display_notice_number_query if source == "kokuji" else display_article_query
+        if source == "law" and not article_query and notice_number_query:
+            article_query = notice_number_query
+            number_query = article_query
+            if not display_article_query and display_notice_number_query:
+                display_number_query = display_notice_number_query
         if source == "kokuji" and not notice_number_query and article_query:
             notice_number_query = article_query
             number_query = notice_number_query
+            if not display_notice_number_query and display_article_query:
+                display_number_query = display_article_query
         query = self._display_query(number_query, body_query)
 
         rows = []
@@ -1306,8 +1350,9 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             meta = "キーワードを入力してください"
 
         body = SEARCH_PAGE_TEMPLATE.format(
-            number_query=html.escape(number_query),
-            body_query=html.escape(body_query),
+            shutdown_action=self._render_shutdown_action(),
+            number_query=html.escape(display_number_query),
+            body_query=html.escape(display_body_query),
             number_label=html.escape(self._number_label_for_source(source)),
             number_field_name=html.escape(self._number_field_name_for_source(source)),
             number_placeholder=html.escape(self._number_placeholder_for_source(source)),
@@ -1342,6 +1387,8 @@ class LawSearchHandler(BaseHTTPRequestHandler):
     def _handle_export_results(self, parsed):
         source = self._parse_source(parsed.query)
         article_query, notice_number_query, body_query = self._parse_search_inputs(parsed.query)
+        if source == "law" and not article_query and notice_number_query:
+            article_query = notice_number_query
         if source == "kokuji" and not notice_number_query and article_query:
             notice_number_query = article_query
 
@@ -1471,7 +1518,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
     def _read_post_params(self):
         length = int(self.headers.get("Content-Length", "0") or "0")
         payload = self.rfile.read(length).decode("utf-8")
-        return parse_qs(payload)
+        return parse_qs(payload, keep_blank_values=True)
 
     @staticmethod
     def _parse_flash_message(query_string: str) -> Tuple[str, str]:
@@ -1492,11 +1539,22 @@ class LawSearchHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _parse_search_inputs(query_string: str) -> Tuple[str, str, str]:
-        params = parse_qs(query_string)
+        params = parse_qs(query_string, keep_blank_values=True)
         article_query = params.get("article", [""])[0].strip() or params.get("article_q", [""])[0].strip()
         notice_number_query = params.get("notice_number", [""])[0].strip()
         body_query = params.get("body_q", [""])[0].strip()
         legacy_query = params.get("q", [""])[0].strip()
+        if not body_query and legacy_query:
+            body_query = legacy_query
+        return article_query, notice_number_query, body_query
+
+    @staticmethod
+    def _parse_search_display_inputs(query_string: str) -> Tuple[str, str, str]:
+        params = parse_qs(query_string, keep_blank_values=True)
+        article_query = params.get("article", [""])[0] or params.get("article_q", [""])[0]
+        notice_number_query = params.get("notice_number", [""])[0]
+        body_query = params.get("body_q", [""])[0]
+        legacy_query = params.get("q", [""])[0]
         if not body_query and legacy_query:
             body_query = legacy_query
         return article_query, notice_number_query, body_query
@@ -1701,15 +1759,25 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             return self._format_result_rows(rows), ""
 
     def search_body(self, query: str):
+        tokens = self._tokenize_search_terms(query)
+        if not tokens:
+            return [], ""
+
         conn, warning = self._connect_search_db()
         if conn is None:
             return [], warning
+
+        like_where_parts = ["(a.body LIKE ? OR l.law_name LIKE ?)" for _ in tokens]
+        like_params: list[str] = []
+        for token in tokens:
+            wildcard = f"%{token}%"
+            like_params.extend([wildcard, wildcard])
 
         like_sql = f"""
             SELECT l.law_name, a.provision_kind, a.article_no, a.body
             FROM articles a
             JOIN laws l ON l.law_id = a.law_id
-            WHERE a.provision_kind = 'main' AND (a.body LIKE ? OR l.law_name LIKE ?)
+            WHERE a.provision_kind = 'main' AND {" AND ".join(like_where_parts)}
             ORDER BY
                 {self._law_order_sql()}
                 a.article_sort_base,
@@ -1740,7 +1808,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
 
         with closing(conn):
             try:
-                like_rows = conn.execute(like_sql, (f"%{query}%", f"%{query}%")).fetchall()
+                like_rows = conn.execute(like_sql, like_params).fetchall()
             except sqlite3.OperationalError:
                 return [], "法令DBを検索できません"
             if like_rows:
@@ -1748,8 +1816,8 @@ class LawSearchHandler(BaseHTTPRequestHandler):
                     (
                         self._display_law_name(law_name, provision_kind),
                         article_no,
-                        self._build_like_snippet(body, query),
-                        self._highlight_text(body, query),
+                        self._build_like_snippet_multi(body, tokens),
+                        self._highlight_text_multi(body, tokens),
                     )
                     for law_name, provision_kind, article_no, body in like_rows
                 ], ""
@@ -1758,9 +1826,10 @@ class LawSearchHandler(BaseHTTPRequestHandler):
                 return [], ""
 
             try:
-                return self._format_result_rows(conn.execute(fts_sql, (query,)).fetchall(), body_index=3, full_body_index=4), ""
+                fts_query = self._build_fts_and_query(tokens)
+                return self._format_result_rows(conn.execute(fts_sql, (fts_query,)).fetchall(), body_index=3, full_body_index=4), ""
             except sqlite3.OperationalError:
-                quoted = f'"{query}"'
+                quoted = self._build_fts_phrase_query(query)
                 try:
                     rows = conn.execute(fts_sql, (quoted,)).fetchall()
                 except sqlite3.OperationalError:
@@ -1996,6 +2065,29 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             return snippet
         return f"{heading}\n{snippet}"
 
+    @staticmethod
+    def _tokenize_search_terms(query: str) -> List[str]:
+        return [token for token in re.split(r"[\s\u3000]+", (query or "").strip()) if token]
+
+    @classmethod
+    def _build_fts_and_query(cls, terms: List[str]) -> str:
+        return " AND ".join(cls._quote_fts_term(term) for term in terms)
+
+    @staticmethod
+    def _quote_fts_term(term: str) -> str:
+        return '"' + term.replace('"', '""') + '"'
+
+    @classmethod
+    def _build_fts_phrase_query(cls, query: str) -> str:
+        return cls._quote_fts_term((query or "").strip())
+
+    @classmethod
+    def _build_collapsed_body_preview(cls, body_text: str, max_lines: int = 8) -> str:
+        lines = (body_text or "").splitlines()
+        if len(lines) <= max_lines:
+            return body_text or ""
+        return "\n".join(lines[:max_lines])
+
     @classmethod
     def _build_like_snippet(cls, body_text: str, query: str, radius: int = 80) -> str:
         body_text = body_text or ""
@@ -2013,6 +2105,24 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             snippet = f"{snippet} …"
         snippet = snippet.replace(query, f"<mark>{query}</mark>", 1)
         return cls._prepend_heading_to_snippet(body_text, snippet)
+
+    @classmethod
+    def _build_like_snippet_multi(cls, body_text: str, terms: List[str], radius: int = 80) -> str:
+        body_text = body_text or ""
+        match_candidates = [(body_text.find(term), term) for term in terms if term and body_text.find(term) >= 0]
+        if not match_candidates:
+            snippet = body_text[: radius * 2]
+            return cls._highlight_text_multi(cls._prepend_heading_to_snippet(body_text, snippet), terms)
+
+        idx, matched_term = min(match_candidates, key=lambda item: item[0])
+        start = max(0, idx - radius)
+        end = min(len(body_text), idx + len(matched_term) + radius)
+        snippet = body_text[start:end]
+        if start > 0:
+            snippet = f"… {snippet}"
+        if end < len(body_text):
+            snippet = f"{snippet} …"
+        return cls._highlight_text_multi(cls._prepend_heading_to_snippet(body_text, snippet), terms)
 
     @staticmethod
     def _highlight_text(text: str, query: str) -> str:
@@ -2066,11 +2176,14 @@ class LawSearchHandler(BaseHTTPRequestHandler):
     @classmethod
     def _filter_article_rows_by_body_keyword(cls, rows, body_query: str):
         filtered_rows = []
+        terms = cls._tokenize_search_terms(body_query)
         for law_name, article_no, body, full_body in rows:
-            if body_query not in full_body:
+            plain_full_body = cls._plain_text_for_copy(full_body)
+            if not terms or any(term not in plain_full_body for term in terms):
                 continue
-            highlighted_body = cls._highlight_text(full_body, body_query)
-            filtered_rows.append((law_name, article_no, highlighted_body, highlighted_body))
+            highlighted_full_body = cls._highlight_text_multi(full_body, terms)
+            preview_body = cls._build_collapsed_body_preview(highlighted_full_body)
+            filtered_rows.append((law_name, article_no, preview_body, highlighted_full_body))
         return filtered_rows
 
     @classmethod
@@ -2078,6 +2191,8 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         law_name, provision_kind, article_no = row[:3]
         body = row[body_index]
         full_body = body if full_body_index is None else row[full_body_index]
+        if full_body_index is None:
+            body = cls._build_collapsed_body_preview(body)
         return (cls._display_law_name(law_name, provision_kind), article_no, body, full_body)
 
     @staticmethod
@@ -2193,8 +2308,8 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             copy_button_html = ""
             if row_id and has_full_text:
                 copy_button_html = (
-                    f"<button type='button' class='kokuji-copy-button' data-notice-id='{html.escape(row_id, quote=True)}' data-kokuji-id='{html.escape(row_id, quote=True)}'>全文コピー</button>"
-                    "<span class='kokuji-copy-feedback' hidden>コピー済み</span>"
+                    f"<button type='button' class='copy-button kokuji-copy-button' title='全文コピー' aria-label='全文コピー' data-notice-id='{html.escape(row_id, quote=True)}' data-kokuji-id='{html.escape(row_id, quote=True)}'></button>"
+                    "<span class='copy-feedback kokuji-copy-feedback' hidden>コピー済み</span>"
                 )
             link_stack = f"<div class='kokuji-link-stack'>{link_html}{copy_button_html}</div>" if (link_html or copy_button_html) else ""
             lines.append(
@@ -2214,6 +2329,36 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         if not match:
             return ""
         return match.group(1)
+
+    def _render_shutdown_action(self) -> str:
+        if not self._is_local_shutdown_available():
+            return ""
+        return (
+            "<form method='post' action='/shutdown' onsubmit=\"return window.confirm('ローカルサーバーを終了しますか？');\">"
+            "<button type='submit' class='nav-link shutdown-link'>終了</button>"
+            "</form>"
+        )
+
+    def _is_local_shutdown_available(self) -> bool:
+        server = getattr(self, "server", None)
+        if server is None:
+            return False
+        try:
+            host = str(server.server_address[0])
+        except Exception:
+            return False
+        return host in {"127.0.0.1", "localhost", "::1"}
+
+    def _handle_shutdown_request(self) -> None:
+        if not self._is_local_shutdown_available():
+            self._send_json({"error": "shutdown unavailable"}, status=HTTPStatus.FORBIDDEN)
+            return
+        self._send_html(
+            b"<!doctype html><html lang='ja'><meta charset='utf-8'><title>Shutting down</title><body>Archi_law_search server is shutting down.</body></html>"
+        )
+        server = getattr(self, "server", None)
+        if server is not None:
+            threading.Thread(target=server.shutdown, daemon=True).start()
 
     def render_settings_table(self, installed_ids: Set[str]) -> str:
         if not LAW_REGISTRY:
