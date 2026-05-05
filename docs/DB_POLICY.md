@@ -12,3 +12,4 @@
 - 告示本文DBの生成・PDF取得・本文抽出は `Kokuji_DB` 側の責務とし、このリポジトリでは行いません。
 - このリポジトリでは `data/kokuji_notices.db` を読み取り専用の検索対象として扱います。
 - `source_registry` で `kokuji` を active / inactive 切替できますが、inactive でも DB ファイルは削除しません。
+- 告示検索では、`document_number_norm` / `document_number_digits` がある場合はそれらを優先し、ない場合は `document_number` / `notice_name` / `full_text` にフォールバックして、古いDBでも検索UIが落ちないようにします。

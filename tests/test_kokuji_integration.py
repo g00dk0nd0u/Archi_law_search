@@ -33,7 +33,7 @@ def create_sample_kokuji_db(db_path: pathlib.Path, *, with_native_number_columns
             """
             insert_columns = "document_number_norm, document_number_digits, content_type,"
             first_extra_values = ("第1号", "1", "application/pdf")
-            second_extra_values = ("第294号", "294", "application/pdf")
+            second_extra_values = ("第1436号", "1436", "application/pdf")
         conn.execute(
             """
             CREATE TABLE notices (
@@ -112,15 +112,15 @@ def create_sample_kokuji_db(db_path: pathlib.Path, *, with_native_number_columns
             """,
             (
                 "防火設備の構造方法を定める件",
-                "国土交通省告示第二百九十四号",
+                "国土交通省告示第千四百三十六号",
                 *second_extra_values,
                 "2026-02-01",
                 "国土交通省住宅局建築指導課",
-                "https://example.com/294.pdf",
+                "https://example.com/1436.pdf",
                 "seed",
                 "fetch_ok",
                 "text_ok",
-                "この告示は防火設備の構造方法を定め、第二百九十四号として公布された。",
+                "この告示は防火設備および排煙に関する構造方法を定め、第千四百三十六号として公布された。",
                 40,
                 1,
                 "2026-02-01T00:00:00+00:00",
@@ -157,35 +157,35 @@ class KokujiIntegrationTests(unittest.TestCase):
         self.assertIn("準不燃", payload["results"][0]["snippet"])
 
     def test_search_kokuji_matches_notice_number_variants(self):
-        queries = ["294", "294号", "告示第294号", "建設省告示第294号", "国土交通省告示第294号"]
+        queries = ["1436", "1436号", "告示第1436号", "建設省告示第1436号", "国土交通省告示第1436号"]
         with tempfile.NamedTemporaryFile(suffix=".db") as tf:
             create_sample_kokuji_db(pathlib.Path(tf.name), with_native_number_columns=True)
             for query in queries:
                 payload = search_kokuji(pathlib.Path(tf.name), notice_number=query, limit=10)
                 self.assertGreaterEqual(payload["count"], 1, query)
                 self.assertTrue(
-                    any(result["document_number"] == "国土交通省告示第二百九十四号" for result in payload["results"]),
+                    any(result["document_number"] == "国土交通省告示第千四百三十六号" for result in payload["results"]),
                     query,
                 )
                 self.assertTrue(payload["highlight_terms"])
-                self.assertEqual(payload["results"][0]["display_document_number"], "第294号")
+                self.assertEqual(payload["results"][0]["display_document_number"], "第1436号")
 
     def test_search_kokuji_combines_notice_number_and_keyword(self):
         with tempfile.NamedTemporaryFile(suffix=".db") as tf:
             create_sample_kokuji_db(pathlib.Path(tf.name), with_native_number_columns=True)
-            payload = search_kokuji(pathlib.Path(tf.name), query="排煙", notice_number="294", limit=10)
+            payload = search_kokuji(pathlib.Path(tf.name), query="排煙", notice_number="1436", limit=10)
 
         self.assertEqual(payload["count"], 1)
-        self.assertEqual(payload["results"][0]["display_document_number"], "第294号")
+        self.assertEqual(payload["results"][0]["display_document_number"], "第1436号")
         self.assertIn("排煙", payload["results"][0]["snippet"])
 
     def test_search_kokuji_old_db_fallback_still_works(self):
         with tempfile.NamedTemporaryFile(suffix=".db") as tf:
             create_sample_kokuji_db(pathlib.Path(tf.name), with_native_number_columns=False)
-            payload = search_kokuji(pathlib.Path(tf.name), notice_number="294", limit=10)
+            payload = search_kokuji(pathlib.Path(tf.name), notice_number="1436", limit=10)
 
         self.assertEqual(payload["count"], 1)
-        self.assertEqual(payload["results"][0]["document_number"], "国土交通省告示第二百九十四号")
+        self.assertEqual(payload["results"][0]["document_number"], "国土交通省告示第千四百三十六号")
 
     def test_search_kokuji_cli_supports_notice_number_option(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -211,7 +211,7 @@ class KokujiIntegrationTests(unittest.TestCase):
                     "--registry-db",
                     str(registry_db),
                     "--notice-number",
-                    "294",
+                    "1436",
                     "--limit",
                     "10",
                 ],
@@ -222,7 +222,23 @@ class KokujiIntegrationTests(unittest.TestCase):
             )
 
         self.assertEqual(result.returncode, 0)
-        self.assertIn('"notice_number": "294"', result.stdout)
+        self.assertIn('"notice_number": "1436"', result.stdout)
+
+    def test_handle_search_page_accepts_article_as_notice_number_in_kokuji_mode(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = pathlib.Path(tmpdir)
+            laws_db = tmp_path / "laws.db"
+            kokuji_db = tmp_path / "kokuji.db"
+            laws_db.touch()
+            create_sample_kokuji_db(kokuji_db, with_native_number_columns=True)
+            handler, captured = self._make_handler(laws_db, kokuji_db)
+
+            parsed = type("Parsed", (), {"query": "source=kokuji&article=1436&q=%E6%8E%92%E7%85%99"})()
+            LawSearchHandler._handle_search_page(handler, parsed)
+
+        self.assertIn("第1436号", captured["html"])
+        self.assertIn(">PDF<", captured["html"])
+        self.assertNotIn("種別", captured["html"])
 
     def test_import_kokuji_db_copies_sqlite_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -389,7 +405,9 @@ class KokujiIntegrationTests(unittest.TestCase):
             self.assertNotIn("<th>条</th>", captured["html"])
             self.assertNotIn("<th>機関</th>", captured["html"])
             self.assertIn("<mark>準不燃</mark>", captured["html"])
-            self.assertIn("告示番号・キーワード", captured["html"])
+            self.assertIn("告示番号", captured["html"])
+            self.assertIn("検索キーワード", captured["html"])
+            self.assertIn(">PDF<", captured["html"])
 
     def test_web_ui_kokuji_number_search_highlights_notice_fields(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -400,12 +418,11 @@ class KokujiIntegrationTests(unittest.TestCase):
             create_sample_kokuji_db(kokuji_db)
 
             handler, captured = self._make_handler(laws_db, kokuji_db)
-            parsed = type("Parsed", (), {"query": "q=294%E5%8F%B7&source=kokuji"})()
+            parsed = type("Parsed", (), {"query": "notice_number=1436%E5%8F%B7&source=kokuji"})()
             LawSearchHandler._handle_search_page(handler, parsed)
 
-            self.assertIn("国土交通省<mark>告示第二百九十四号</mark>", captured["html"])
+            self.assertIn("<mark>第千四百三十六号</mark>", captured["html"])
             self.assertIn("防火設備", captured["html"])
-            self.assertIn("<mark>第二百九十四号</mark>", captured["html"])
             self.assertNotIn("<th>機関</th>", captured["html"])
 
     def test_missing_source_param_and_invalid_source_fall_back_to_law(self):
@@ -424,8 +441,8 @@ class KokujiIntegrationTests(unittest.TestCase):
             LawSearchHandler._handle_search_page(handler, parsed)
 
             self.assertIn("告示DBが見つかりません", captured["html"])
-            self.assertIn('value="kokuji" disabled', captured["html"])
-            self.assertIn('value="law" checked', captured["html"])
+            self.assertIn('name="source" value="kokuji" checked disabled', captured["html"])
+            self.assertIn("告示DBが未作成です。", captured["html"])
 
     def test_inactive_kokuji_source_blocks_kokuji_search(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -448,8 +465,8 @@ class KokujiIntegrationTests(unittest.TestCase):
             LawSearchHandler._handle_search_page(handler, parsed)
 
             self.assertIn("告示検索は現在無効です", captured["html"])
-            self.assertIn('value="kokuji" disabled', captured["html"])
-            self.assertIn('value="law" checked', captured["html"])
+            self.assertIn('name="source" value="kokuji" checked disabled', captured["html"])
+            self.assertIn("告示検索は現在無効です。", captured["html"])
 
 
 if __name__ == "__main__":

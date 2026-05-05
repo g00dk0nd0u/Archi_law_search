@@ -22,7 +22,12 @@ python -m src.prepare_sqlite --db data/laws.db
 python -m src.web_app --db data/laws.db --host 127.0.0.1 --port 8765
 ```
 
-ブラウザで `http://127.0.0.1:8765` を開いて検索します。検索欄は 1 つで、右側のスイッチから検索対象を `法令` / `告示` で切り替えます。デフォルトは `法令` です。`Settings` から法令の追加・更新・削除もできます。
+ブラウザで `http://127.0.0.1:8765` を開いて検索します。検索フォームは左から `番号` → `検索キーワード` → `法令 / 告示スイッチ` → `検索` の順で、デフォルトは `法令` です。`Settings` から法令の追加・更新・削除もできます。
+
+- `source=law` では `article` に条番号、`q` に本文キーワードを入れます
+- `source=kokuji` では `notice_number` に告示番号、`q` にキーワードを入れます
+- `source=kokuji` に対して `article=1436` のような旧URLが来た場合も、`notice_number` の代替として扱います
+- `source` 未指定または不正値は `law` 扱いです
 
 - `source=law` のときは `data/laws.db` を検索します
 - `source=kokuji` のときは `data/kokuji_notices.db` を検索します
@@ -66,9 +71,10 @@ python3 tools/import_kokuji_db.py --source ../Kokuji_DB/data/kokuji_notices.db -
 ```bash
 python3 -m cli.search_kokuji --query "準不燃" --limit 10
 python3 -m cli.search_kokuji --query "建築物" --limit 10 --json-pretty
+python3 -m cli.search_kokuji --notice-number "1436号" --limit 10
 ```
 
-検索は LIKE を主とし、DB内に FTS5 テーブルがある場合だけ補助的に使います。
+検索は LIKE を主とし、DB内に FTS5 テーブルがある場合だけ補助的に使います。`document_number_norm` / `document_number_digits` がある新しい告示DBではそれらを優先し、古いDBでは `document_number` / `notice_name` / `full_text` に自動フォールバックします。
 `kokuji` を検索対象に含めるかは `source_registry` の `is_active` で切り替えます。inactive でも DB ファイルは削除しません。
 
 ## docs

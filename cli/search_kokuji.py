@@ -28,7 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--db", default=str(DEFAULT_DB_PATH), help="Path to kokuji_notices.db")
     parser.add_argument("--registry-db", default=str(DEFAULT_REGISTRY_DB_PATH), help="Path to source registry DB")
     parser.add_argument("--query", default="", help="Keyword query for kokuji notices")
-    parser.add_argument("--notice-number", default="", help="Notice number query such as 294 or 第294号")
+    parser.add_argument("--notice-number", default="", help="Notice number query such as 1436 or 第1436号")
     parser.add_argument("--limit", type=int, default=20, help="Maximum number of results")
     parser.add_argument("--json", action="store_true", help="Print compact JSON")
     parser.add_argument("--json-pretty", action="store_true", help="Print indented JSON")

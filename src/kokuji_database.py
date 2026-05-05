@@ -204,6 +204,13 @@ def build_notice_number_variants(notice_number: str) -> list[str]:
     return variants
 
 
+def looks_like_notice_number_query(query: str) -> bool:
+    normalized = normalize_ascii_digits((query or "").strip())
+    if not normalized or len(tokenize_query(normalized)) != 1:
+        return False
+    return bool(extract_digits(normalized))
+
+
 def normalize_whitespace(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
 
@@ -289,7 +296,6 @@ def build_rank_clause(
         return " OR ".join([f"COALESCE({column}, '') LIKE ?" for _ in highlight_terms]) or "0"
 
     if notice_number:
-        notice_variants = build_notice_number_variants(notice_number)
         notice_digits = extract_digits(notice_number)
         digit_clause = f"COALESCE({document_number_digits_col}, '') = ?" if notice_digits and document_number_digits_col else "0"
         norm_clause = column_clause(document_number_norm_col) if document_number_norm_col else "0"
@@ -303,20 +309,18 @@ def build_rank_clause(
                 WHEN ({number_clause}) THEN 2
                 WHEN ({name_clause}) THEN 3
                 WHEN ({text_clause}) THEN 4
-                WHEN ({column_clause(organization_col)}) THEN 5
-                ELSE 6
+                ELSE 5
             END
         """
-        notice_like_params = [f"%{term}%" for term in notice_variants]
+        highlight_like_params = [f"%{term}%" for term in highlight_terms]
         params: list[str] = []
         if notice_digits and document_number_digits_col:
             params.append(notice_digits)
         if document_number_norm_col:
-            params.extend(notice_like_params)
-        params.extend(notice_like_params)
-        params.extend(notice_like_params)
-        params.extend(notice_like_params)
-        params.extend(notice_like_params)
+            params.extend(highlight_like_params)
+        params.extend(highlight_like_params)
+        params.extend(highlight_like_params)
+        params.extend(highlight_like_params)
         return rank_sql, params
 
     rank_sql = f"""
@@ -476,24 +480,27 @@ def search_kokuji(
         raise ValueError("limit must be greater than 0")
     query = (query or "").strip()
     notice_number = (notice_number or "").strip()
-    terms = tokenize_query(query)
-    if not terms and not notice_number:
+    derived_from_query = not notice_number and looks_like_notice_number_query(query)
+    derived_notice_number = notice_number or (query if derived_from_query else "")
+    effective_query = "" if derived_from_query else query
+    terms = tokenize_query(effective_query)
+    if not terms and not derived_notice_number:
         raise ValueError("query or notice_number must not be empty")
     highlight_terms = build_highlight_terms(query)
-    for term in build_notice_number_variants(notice_number):
+    for term in build_notice_number_variants(derived_notice_number):
         if term not in highlight_terms:
             highlight_terms.append(term)
-    digits = extract_digits(notice_number)
+    digits = extract_digits(derived_notice_number)
     if digits and digits not in highlight_terms:
         highlight_terms.append(digits)
 
     conn = connect_db(db_path)
     try:
         schema = detect_schema(conn)
-        rows = run_like_search(conn, schema, query, notice_number, limit)
+        rows = run_like_search(conn, schema, effective_query, derived_notice_number, limit)
         mode = "like"
         warnings: list[str] = []
-        if not rows and terms and not notice_number and schema["fts_table"] and supports_fts5(conn):
+        if not rows and terms and not derived_notice_number and schema["fts_table"] and supports_fts5(conn):
             try:
                 rows = run_fts_search(conn, schema, terms, limit)
                 if rows:
@@ -536,7 +543,7 @@ def search_kokuji(
     return {
         "db_path": str(db_path),
         "query": query,
-        "notice_number": notice_number,
+        "notice_number": derived_notice_number,
         "limit": limit,
         "count": len(results),
         "search_mode": mode,

@@ -600,7 +600,7 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
         }},
         kokuji: {{
           numberLabel: "告示番号",
-          numberPlaceholder: "例: 294号",
+          numberPlaceholder: "例: 1436号",
           keywordPlaceholder: "例: 排煙、防火設備、準不燃",
         }},
       }};
@@ -1331,7 +1331,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _number_placeholder_for_source(source: str) -> str:
-        return "例: 294号" if source == "kokuji" else "例: 112"
+        return "例: 1436号" if source == "kokuji" else "例: 112"
 
     @staticmethod
     def _number_field_name_for_source(source: str) -> str:

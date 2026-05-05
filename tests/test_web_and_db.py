@@ -766,19 +766,21 @@ class DatabaseAndWebTests(unittest.TestCase):
             conn.close()
 
     def test_parse_search_inputs_prioritizes_article_and_legacy_q_as_body(self):
-        article_q, body_q = LawSearchHandler._parse_search_inputs("q=%E8%80%90%E7%81%AB")
+        article_q, notice_number_q, body_q = LawSearchHandler._parse_search_inputs("q=%E8%80%90%E7%81%AB")
         self.assertEqual(article_q, "")
+        self.assertEqual(notice_number_q, "")
         self.assertEqual(body_q, "耐火")
 
-        article_q2, body_q2 = LawSearchHandler._parse_search_inputs(
-            "article_q=%E7%AC%AC1%E6%9D%A1&body_q=%E8%80%90%E7%81%AB&q=%E9%98%B2%E7%81%AB"
+        article_q2, notice_number_q2, body_q2 = LawSearchHandler._parse_search_inputs(
+            "article=%E7%AC%AC112%E6%9D%A1&notice_number=1436%E5%8F%B7&body_q=%E8%80%90%E7%81%AB&q=%E9%98%B2%E7%81%AB"
         )
-        self.assertEqual(article_q2, "第1条")
+        self.assertEqual(article_q2, "第112条")
+        self.assertEqual(notice_number_q2, "1436号")
         self.assertEqual(body_q2, "耐火")
 
         mode, active_query = LawSearchHandler._select_search_query(article_q2, body_q2)
         self.assertEqual(mode, "article")
-        self.assertEqual(active_query, "第1条")
+        self.assertEqual(active_query, "第112条")
         self.assertEqual(LawSearchHandler._parse_source("q=%E8%80%90%E7%81%AB"), "law")
         self.assertEqual(LawSearchHandler._parse_source("q=%E6%BA%96%E4%B8%8D%E7%87%83&source=kokuji"), "kokuji")
         self.assertEqual(LawSearchHandler._parse_source("source=invalid"), "law")
@@ -793,9 +795,12 @@ class DatabaseAndWebTests(unittest.TestCase):
 
     def test_page_template_supports_realtime_search_script(self):
         html_doc = SEARCH_PAGE_TEMPLATE.format(
-            query="耐火",
-            query_label="検索キーワード",
-            query_placeholder="例: 容積率、準耐火、第112条",
+            number_query="112",
+            body_query="耐火",
+            number_label="条番号",
+            number_field_name="article",
+            number_placeholder="例: 112",
+            query_placeholder="例: 防火、容積率、準耐火",
             law_checked=" checked",
             kokuji_checked="",
             kokuji_disabled="",
@@ -811,15 +816,19 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn('document.addEventListener("DOMContentLoaded"', html_doc)
         self.assertIn("compositionstart", html_doc)
         self.assertIn("compositionend", html_doc)
-        self.assertIn("if (!queryValue) {", html_doc)
+        self.assertIn("const numberValue = numberInput.value.trim();", html_doc)
+        self.assertIn("if (!numberValue && !queryValue) {", html_doc)
         self.assertIn("return true;", html_doc)
         self.assertIn("queryValue.length < 2", html_doc)
         self.assertIn("AUTO_SUBMIT_DELAY_MS = 700", html_doc)
         self.assertIn('querySelectorAll("td.body.is-expandable")', html_doc)
         self.assertIn('document.querySelectorAll("input[name=\'source\']")', html_doc)
         self.assertIn('const sourceConfig = {', html_doc)
-        self.assertIn('告示番号・キーワード', html_doc)
-        self.assertIn('例: 294号、防火設備、準不燃', html_doc)
+        self.assertIn('numberLabel: "告示番号"', html_doc)
+        self.assertIn('numberPlaceholder: "例: 1436号"', html_doc)
+        self.assertIn('keywordPlaceholder: "例: 排煙、防火設備、準不燃"', html_doc)
+        self.assertIn('name="article"', html_doc)
+        self.assertIn('name="q"', html_doc)
         self.assertIn('navigator.clipboard.writeText', html_doc)
         self.assertIn('document.querySelectorAll(".copy-button")', html_doc)
         self.assertIn('document.querySelector(".bulk-copy-button")', html_doc)
@@ -845,6 +854,31 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn(">Settings<", html_doc)
         self.assertIn('value="law" checked', html_doc)
         self.assertIn(">告示<", html_doc)
+        self.assertLess(html_doc.index('name="article"'), html_doc.index('name="q"'))
+        self.assertLess(html_doc.index('name="q"'), html_doc.index('name="source" value="law"'))
+        self.assertLess(html_doc.index('name="source" value="law"'), html_doc.index('class="search-submit"'))
+
+    def test_render_kokuji_table_uses_notice_number_first_and_link_labels(self):
+        handler = object.__new__(LawSearchHandler)
+        table_html = LawSearchHandler.render_kokuji_table(
+            handler,
+            [
+                {
+                    "display_document_number": "第1436号",
+                    "notice_name": "防火設備の構造方法を定める件",
+                    "organization": "国土交通省",
+                    "snippet": "排煙に関する抜粋",
+                    "url": "https://example.com/1436.pdf",
+                    "link_label": "PDF",
+                }
+            ],
+        )
+
+        self.assertIn("<th>告示番号</th><th>告示名</th><th>抜粋</th><th>リンク</th>", table_html)
+        self.assertNotIn("<th>種別</th>", table_html)
+        self.assertLess(table_html.index("第1436号"), table_html.index("防火設備の構造方法を定める件"))
+        self.assertIn(">PDF<", table_html)
+        self.assertNotIn(">原本<", table_html)
 
     def test_settings_template_supports_notice_and_table_markup(self):
         html_doc = SETTINGS_PAGE_TEMPLATE.format(notice="<div>ok</div>", rows="<table><tbody></tbody></table>")
