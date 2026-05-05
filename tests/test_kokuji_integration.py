@@ -14,7 +14,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT / "src"))
 
 from kokuji_database import connect_db, search_kokuji  # type: ignore
-from source_registry import ensure_source_registry, is_source_active, set_source_active  # type: ignore
+from source_registry import ensure_source_registry, get_source_status, is_source_active, set_source_active  # type: ignore
+from web_app import LawSearchHandler  # type: ignore
 
 
 def create_sample_kokuji_db(db_path: pathlib.Path) -> None:
@@ -81,6 +82,20 @@ def create_sample_kokuji_db(db_path: pathlib.Path) -> None:
 
 
 class KokujiIntegrationTests(unittest.TestCase):
+    def _make_handler(self, laws_db: pathlib.Path, kokuji_db: pathlib.Path):
+        handler = object.__new__(LawSearchHandler)
+        handler.db_path = str(laws_db)
+        handler.kokuji_db_path = str(kokuji_db)
+        handler.render_table = LawSearchHandler.render_table.__get__(handler, LawSearchHandler)
+        handler.render_results = LawSearchHandler.render_results.__get__(handler, LawSearchHandler)
+        captured: dict[str, str] = {}
+
+        def fake_send_html(body: bytes):
+            captured["html"] = body.decode("utf-8")
+
+        handler._send_html = fake_send_html
+        return handler, captured
+
     def test_search_kokuji_uses_like_search(self):
         with tempfile.NamedTemporaryFile(suffix=".db") as tf:
             create_sample_kokuji_db(pathlib.Path(tf.name))
@@ -165,6 +180,7 @@ class KokujiIntegrationTests(unittest.TestCase):
             self.assertFalse(is_source_active("kokuji", db_path))
             set_source_active("kokuji", True, db_path)
             self.assertTrue(is_source_active("kokuji", db_path))
+            self.assertTrue(get_source_status("kokuji", db_path)["is_active"])
 
     def test_cli_search_kokuji_returns_inactive_payload(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -205,6 +221,97 @@ class KokujiIntegrationTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0)
             self.assertIn('"inactive": true', result.stdout.lower())
             self.assertIn("kokuji source is inactive", result.stdout)
+
+    def test_web_ui_defaults_to_law_source(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = pathlib.Path(tmpdir)
+            laws_db = tmp_path / "laws.db"
+            kokuji_db = tmp_path / "kokuji.db"
+            sqlite3.connect(str(laws_db)).close()
+            create_sample_kokuji_db(kokuji_db)
+
+            handler, captured = self._make_handler(laws_db, kokuji_db)
+            parsed = type("Parsed", (), {"query": ""})()
+            LawSearchHandler._handle_search_page(handler, parsed)
+
+            self.assertIn('name="source" value="law" checked', captured["html"])
+            self.assertNotIn('name="source" value="kokuji" checked', captured["html"])
+
+    def test_web_ui_keeps_law_search_results_for_source_law(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = pathlib.Path(tmpdir)
+            laws_db = tmp_path / "laws.db"
+            kokuji_db = tmp_path / "kokuji.db"
+            shutil.copyfile(ROOT / "data" / "laws.db", laws_db)
+            create_sample_kokuji_db(kokuji_db)
+
+            handler, _captured = self._make_handler(laws_db, kokuji_db)
+            rows, warning = LawSearchHandler.search_law_inputs(handler, "", "容積率")
+
+            self.assertEqual(warning, "")
+            self.assertGreater(len(rows), 0)
+            self.assertIn("容積率", rows[0][2] + rows[0][3])
+
+    def test_web_ui_returns_kokuji_results_for_source_kokuji(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = pathlib.Path(tmpdir)
+            laws_db = tmp_path / "laws.db"
+            kokuji_db = tmp_path / "kokuji.db"
+            sqlite3.connect(str(laws_db)).close()
+            create_sample_kokuji_db(kokuji_db)
+
+            handler, captured = self._make_handler(laws_db, kokuji_db)
+            parsed = type("Parsed", (), {"query": "q=%E6%BA%96%E4%B8%8D%E7%87%83&source=kokuji"})()
+            LawSearchHandler._handle_search_page(handler, parsed)
+
+            self.assertIn("準不燃材料を定める件", captured["html"])
+            self.assertIn(">告示<", captured["html"])
+            self.assertIn("国土交通省告示第1号", captured["html"])
+            self.assertIn("name=\"source\" value=\"kokuji\" checked", captured["html"])
+            self.assertNotIn("<th>条</th>", captured["html"])
+
+    def test_missing_source_param_and_invalid_source_fall_back_to_law(self):
+        self.assertEqual(LawSearchHandler._parse_source("q=%E6%BA%96%E4%B8%8D%E7%87%83"), "law")
+        self.assertEqual(LawSearchHandler._parse_source("q=%E6%BA%96%E4%B8%8D%E7%87%83&source=invalid"), "law")
+
+    def test_missing_kokuji_db_disables_switch_without_crashing(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = pathlib.Path(tmpdir)
+            laws_db = tmp_path / "laws.db"
+            sqlite3.connect(str(laws_db)).close()
+            missing_kokuji_db = tmp_path / "missing.db"
+
+            handler, captured = self._make_handler(laws_db, missing_kokuji_db)
+            parsed = type("Parsed", (), {"query": "q=%E6%BA%96%E4%B8%8D%E7%87%83&source=kokuji"})()
+            LawSearchHandler._handle_search_page(handler, parsed)
+
+            self.assertIn("告示DBが見つかりません", captured["html"])
+            self.assertIn('value="kokuji" disabled', captured["html"])
+            self.assertIn('value="law" checked', captured["html"])
+
+    def test_inactive_kokuji_source_blocks_kokuji_search(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = pathlib.Path(tmpdir)
+            laws_db = tmp_path / "laws.db"
+            kokuji_db = tmp_path / "kokuji.db"
+            sqlite3.connect(str(laws_db)).close()
+            create_sample_kokuji_db(kokuji_db)
+            conn = sqlite3.connect(str(laws_db))
+            try:
+                conn.row_factory = sqlite3.Row
+                ensure_source_registry(conn)
+                conn.commit()
+            finally:
+                conn.close()
+            set_source_active("kokuji", False, laws_db)
+
+            handler, captured = self._make_handler(laws_db, kokuji_db)
+            parsed = type("Parsed", (), {"query": "q=%E6%BA%96%E4%B8%8D%E7%87%83&source=kokuji"})()
+            LawSearchHandler._handle_search_page(handler, parsed)
+
+            self.assertIn("告示検索は現在無効です", captured["html"])
+            self.assertIn('value="kokuji" disabled', captured["html"])
+            self.assertIn('value="law" checked', captured["html"])
 
 
 if __name__ == "__main__":

@@ -22,7 +22,11 @@ python -m src.prepare_sqlite --db data/laws.db
 python -m src.web_app --db data/laws.db --host 127.0.0.1 --port 8765
 ```
 
-ブラウザで `http://127.0.0.1:8765` を開いて検索します。`Settings` から法令の追加・更新・削除もできます。
+ブラウザで `http://127.0.0.1:8765` を開いて検索します。検索欄は 1 つで、右側のスイッチから検索対象を `法令` / `告示` で切り替えます。デフォルトは `法令` です。`Settings` から法令の追加・更新・削除もできます。
+
+- `source=law` のときは `data/laws.db` を検索します
+- `source=kokuji` のときは `data/kokuji_notices.db` を検索します
+- `source_registry` の `kokuji.is_active` が false、または `data/kokuji_notices.db` が見つからない場合、告示スイッチは無効表示になります
 
 ## Codex / CLI として使う
 

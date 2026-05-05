@@ -779,6 +779,9 @@ class DatabaseAndWebTests(unittest.TestCase):
         mode, active_query = LawSearchHandler._select_search_query(article_q2, body_q2)
         self.assertEqual(mode, "article")
         self.assertEqual(active_query, "第1条")
+        self.assertEqual(LawSearchHandler._parse_source("q=%E8%80%90%E7%81%AB"), "law")
+        self.assertEqual(LawSearchHandler._parse_source("q=%E6%BA%96%E4%B8%8D%E7%87%83&source=kokuji"), "kokuji")
+        self.assertEqual(LawSearchHandler._parse_source("source=invalid"), "law")
 
     def test_build_meta_handles_article_and_warning_cases(self):
         self.assertEqual(LawSearchHandler._build_meta([], ""), "0件ヒット")
@@ -790,8 +793,11 @@ class DatabaseAndWebTests(unittest.TestCase):
 
     def test_page_template_supports_realtime_search_script(self):
         html_doc = SEARCH_PAGE_TEMPLATE.format(
-            article_query="第1条",
-            body_query="耐火",
+            query="耐火",
+            law_checked=" checked",
+            kokuji_checked="",
+            kokuji_disabled="",
+            source_note="",
             meta="1件ヒット",
             meta_actions="<button class='bulk-copy-button'>全結果をコピー</button>",
             table="<div>ok</div>",
@@ -803,11 +809,12 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn('document.addEventListener("DOMContentLoaded"', html_doc)
         self.assertIn("compositionstart", html_doc)
         self.assertIn("compositionend", html_doc)
-        self.assertIn("if (!articleValue && !bodyValue) {", html_doc)
+        self.assertIn("if (!queryValue) {", html_doc)
         self.assertIn("return true;", html_doc)
-        self.assertIn("bodyValue.length < 2", html_doc)
+        self.assertIn("queryValue.length < 2", html_doc)
         self.assertIn("AUTO_SUBMIT_DELAY_MS = 700", html_doc)
         self.assertIn('querySelectorAll("td.body.is-expandable")', html_doc)
+        self.assertIn('document.querySelectorAll("input[name=\'source\']")', html_doc)
         self.assertIn('navigator.clipboard.writeText', html_doc)
         self.assertIn('document.querySelectorAll(".copy-button")', html_doc)
         self.assertIn('document.querySelector(".bulk-copy-button")', html_doc)
@@ -831,6 +838,8 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn("--mark-bg: #f2cc60;", html_doc)
         self.assertIn("--mark-text: #24292f;", html_doc)
         self.assertIn(">Settings<", html_doc)
+        self.assertIn('value="law" checked', html_doc)
+        self.assertIn(">告示<", html_doc)
 
     def test_settings_template_supports_notice_and_table_markup(self):
         html_doc = SETTINGS_PAGE_TEMPLATE.format(notice="<div>ok</div>", rows="<table><tbody></tbody></table>")
@@ -963,6 +972,10 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn("全結果をコピー", html_with_rows)
         self.assertIn("検索条件", html_with_rows)
         self.assertEqual(html_without_rows, "")
+        self.assertEqual(
+            LawSearchHandler._render_meta_actions(handler, [{"notice_name": "告示"}], source="kokuji"),
+            "",
+        )
 
     def test_build_bulk_copy_text_uses_none_for_missing_conditions(self):
         text = LawSearchHandler._build_bulk_copy_text([], article_query="", body_query="")
@@ -977,12 +990,16 @@ class DatabaseAndWebTests(unittest.TestCase):
 
         handler._send_html = fake_send_html
         handler.render_table = LawSearchHandler.render_table.__get__(handler, LawSearchHandler)
+        handler.render_results = LawSearchHandler.render_results.__get__(handler, LawSearchHandler)
+        handler.kokuji_db_path = str(ROOT / "data" / "kokuji_notices.db")
+        handler.db_path = str(ROOT / "data" / "laws.db")
 
         parsed = type("Parsed", (), {"query": ""})()
         LawSearchHandler._handle_search_page(handler, parsed)
 
         self.assertIn("キーワードを入力してください", captured["html"])
         self.assertIn("該当する条文が見つかりませんでした。検索語を変えて再度お試しください。", captured["html"])
+        self.assertIn('value="law" checked', captured["html"])
 
     def test_search_body_prepends_heading_to_like_snippet(self):
         heading_root = ET.fromstring(SAMPLE_HEADING_XML)

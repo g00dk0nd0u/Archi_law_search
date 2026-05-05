@@ -20,6 +20,21 @@ def connect_db(db_path: Path | str) -> sqlite3.Connection:
     return conn
 
 
+def get_kokuji_db_status(db_path: Path | str) -> tuple[bool, str]:
+    path = Path(db_path)
+    if not path.exists():
+        return False, "告示DBが見つかりません"
+
+    conn = connect_db(path)
+    try:
+        detect_schema(conn)
+    except (FileNotFoundError, KeyError, sqlite3.DatabaseError):
+        return False, "告示DBを開けません"
+    finally:
+        conn.close()
+    return True, ""
+
+
 def table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type IN ('table', 'view') AND name = ? LIMIT 1",

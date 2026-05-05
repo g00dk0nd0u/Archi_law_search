@@ -72,24 +72,50 @@ def ensure_source_registry(conn: sqlite3.Connection) -> None:
     )
 
 
-def is_source_active(source_key: str = "kokuji", db_path: Path | None = None) -> bool:
+def get_source_status(source_key: str = "kokuji", db_path: Path | None = None) -> dict[str, object]:
     registry_path = DEFAULT_REGISTRY_DB_PATH if db_path is None else Path(db_path)
     if not registry_path.exists():
-        return True
+        return {
+            "source_key": source_key,
+            "source_label": source_key,
+            "source_type": source_key,
+            "is_active": True,
+            "is_removable": False,
+        }
 
     conn = connect_registry_db(registry_path)
     try:
         ensure_source_registry(conn)
         row = conn.execute(
-            "SELECT is_active FROM source_registry WHERE source_key = ?",
+            """
+            SELECT source_key, source_label, source_type, is_active, is_removable
+            FROM source_registry
+            WHERE source_key = ?
+            """,
             (source_key,),
         ).fetchone()
         conn.commit()
     finally:
         conn.close()
     if row is None:
-        return True
-    return bool(int(row["is_active"]))
+        return {
+            "source_key": source_key,
+            "source_label": source_key,
+            "source_type": source_key,
+            "is_active": True,
+            "is_removable": False,
+        }
+    return {
+        "source_key": row["source_key"],
+        "source_label": row["source_label"],
+        "source_type": row["source_type"],
+        "is_active": bool(int(row["is_active"])),
+        "is_removable": bool(int(row["is_removable"])),
+    }
+
+
+def is_source_active(source_key: str = "kokuji", db_path: Path | None = None) -> bool:
+    return bool(get_source_status(source_key, db_path)["is_active"])
 
 
 def set_source_active(source_key: str, is_active: bool, db_path: Path | None = None) -> None:

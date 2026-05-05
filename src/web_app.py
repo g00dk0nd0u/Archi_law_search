@@ -15,17 +15,22 @@ from typing import List, Optional, Set, Tuple
 from urllib.parse import parse_qs, urlencode, urlparse
 
 if __package__ in (None, ""):
+    from kokuji_database import DEFAULT_KOKUJI_DB_PATH, get_kokuji_db_status, search_kokuji
     from law_database import LawSource, connect_db, delete_law, ensure_db, fts5_enabled, law_exists, list_installed_law_ids, replace_law
     from law_registry import LAW_BY_ID, LAW_REGISTRY
     from laws_api import fetch_law_xml
     from number_text_utils import int_to_kanji, normalize_num, normalize_separators
+    from source_registry import get_source_status
 else:
+    from .kokuji_database import DEFAULT_KOKUJI_DB_PATH, get_kokuji_db_status, search_kokuji
     from .law_database import LawSource, connect_db, delete_law, ensure_db, fts5_enabled, law_exists, list_installed_law_ids, replace_law
     from .law_registry import LAW_BY_ID, LAW_REGISTRY
     from .laws_api import fetch_law_xml
     from .number_text_utils import int_to_kanji, normalize_num, normalize_separators
+    from .source_registry import get_source_status
 
 DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "laws.db"
+DEFAULT_KOKUJI_PATH = DEFAULT_KOKUJI_DB_PATH
 
 SEARCH_PAGE_TEMPLATE = """<!doctype html>
 <html lang=\"ja\">
@@ -204,10 +209,14 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
     }}
     .search-row {{ display: flex; flex-wrap: wrap; gap: 0.85rem; align-items: flex-end; }}
     .field {{ display: grid; gap: 0.3rem; }}
+    .field.is-main-query {{
+      flex: 1 1 30rem;
+      min-width: 18rem;
+    }}
     label {{ font-weight: 600; font-size: 0.8125rem; color: var(--text-muted); }}
     input[type=text] {{
-      width: 18rem;
-      max-width: 78vw;
+      width: 100%;
+      max-width: 100%;
       padding: 0.45rem 0.65rem;
       border: 1px solid var(--border-input);
       border-radius: 5px;
@@ -225,8 +234,71 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
     input[type=text]::placeholder {{
       color: var(--placeholder-color);
     }}
-    #article_q {{ width: 14rem; }}
-    #body_q {{ width: 30rem; max-width: 80vw; }}
+    .search-submit {{
+      flex: 0 0 auto;
+    }}
+    .source-switch-wrap {{
+      display: grid;
+      gap: 0.3rem;
+      margin-left: auto;
+      justify-items: end;
+      min-width: 11rem;
+    }}
+    .source-switch {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-end;
+      border: 1px solid var(--border-button);
+      border-radius: 999px;
+      background: var(--surface-soft);
+      padding: 0.18rem;
+      gap: 0.2rem;
+      flex-wrap: nowrap;
+    }}
+    .source-option {{
+      position: relative;
+    }}
+    .source-option input {{
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }}
+    .source-option-label {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 4.3rem;
+      min-height: 2rem;
+      padding: 0.3rem 0.85rem;
+      border-radius: 999px;
+      color: var(--text-subtle);
+      font-size: 0.82rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+    }}
+    .source-option input:checked + .source-option-label {{
+      background: var(--accent-color);
+      color: var(--button-text);
+      box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.04);
+    }}
+    .source-option input:focus + .source-option-label {{
+      box-shadow: var(--shadow-ring);
+    }}
+    .source-option input:not(:checked) + .source-option-label:hover {{
+      background: var(--surface-muted);
+      color: var(--text-strong);
+    }}
+    .source-option input:disabled + .source-option-label {{
+      cursor: not-allowed;
+      opacity: 0.45;
+    }}
+    .source-note {{
+      margin: 0;
+      font-size: 0.76rem;
+      color: var(--text-subtle);
+      text-align: right;
+    }}
     button, .action-button {{
       padding: 0.45rem 1.05rem;
       background: var(--accent-color);
@@ -411,15 +483,25 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
   </div>
   <form method=\"get\" action=\"/\" class=\"search-form\">
     <div class=\"search-row\">
-      <div class=\"field\">
-        <label for=\"article_q\">条番号</label>
-        <input id=\"article_q\" type=\"text\" name=\"article_q\" value=\"{article_query}\" placeholder=\"例: 第111条 / １１１ / 百十一\" />
+      <div class=\"field is-main-query\">
+        <label for=\"q\">検索キーワード</label>
+        <input id=\"q\" type=\"text\" name=\"q\" value=\"{query}\" placeholder=\"例: 容積率 / 準不燃 / 第111条\" />
       </div>
-      <div class=\"field\">
-        <label for=\"body_q\">本文キーワード</label>
-        <input id=\"body_q\" type=\"text\" name=\"body_q\" value=\"{body_query}\" placeholder=\"例: 耐火構造\" />
+      <div class=\"source-switch-wrap\">
+        <label>検索対象</label>
+        <div class=\"source-switch\">
+          <label class=\"source-option\">
+            <input type=\"radio\" name=\"source\" value=\"law\"{law_checked} />
+            <span class=\"source-option-label\">法令</span>
+          </label>
+          <label class=\"source-option\">
+            <input type=\"radio\" name=\"source\" value=\"kokuji\"{kokuji_checked}{kokuji_disabled} />
+            <span class=\"source-option-label\">告示</span>
+          </label>
+        </div>
+        <p class=\"source-note\">{source_note}</p>
       </div>
-      <button type=\"submit\">検索</button>
+      <button type=\"submit\" class=\"search-submit\">検索</button>
     </div>
   </form>
   <div class=\"meta\">
@@ -430,8 +512,8 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
   <script>
     document.addEventListener("DOMContentLoaded", function () {{
       const form = document.querySelector(".search-form");
-      const articleInput = document.getElementById("article_q");
-      const bodyInput = document.getElementById("body_q");
+      const queryInput = document.getElementById("q");
+      const sourceInputs = Array.from(document.querySelectorAll("input[name='source']"));
       const themeToggle = document.querySelector("[data-theme-toggle]");
       const themeIcon = themeToggle ? themeToggle.querySelector(".theme-toggle-icon") : null;
 
@@ -473,7 +555,7 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
         }});
       }}
 
-      if (!form || !articleInput || !bodyInput) {{
+      if (!form || !queryInput) {{
         return;
       }}
 
@@ -490,15 +572,20 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       }};
 
       const shouldAutoSubmit = function () {{
-        const articleValue = articleInput.value.trim();
-        const bodyValue = bodyInput.value.trim();
+        const queryValue = queryInput.value.trim();
+        const selectedSource = sourceInputs.find(function (input) {{ return input.checked; }});
+        const sourceValue = selectedSource ? selectedSource.value : "law";
+        const articleLikePattern = /^(?:第)?[0-9０-９一二三四五六七八九十百千〇零]+(?:条)?(?:[-の][0-9０-９一二三四五六七八九十百千〇零]+)?$/;
         if (isComposing) {{
           return false;
         }}
-        if (!articleValue && !bodyValue) {{
+        if (!queryValue) {{
           return true;
         }}
-        if (!articleValue && bodyValue.length < 2) {{
+        if (sourceValue === "law" && articleLikePattern.test(queryValue)) {{
+          return true;
+        }}
+        if (queryValue.length < 2) {{
           return false;
         }}
         return true;
@@ -540,12 +627,17 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
         scheduleSubmit();
       }};
 
-      articleInput.addEventListener("input", scheduleSubmit);
-      bodyInput.addEventListener("input", scheduleSubmit);
-      articleInput.addEventListener("compositionstart", handleCompositionStart);
-      bodyInput.addEventListener("compositionstart", handleCompositionStart);
-      articleInput.addEventListener("compositionend", handleCompositionEnd);
-      bodyInput.addEventListener("compositionend", handleCompositionEnd);
+      queryInput.addEventListener("input", scheduleSubmit);
+      queryInput.addEventListener("compositionstart", handleCompositionStart);
+      queryInput.addEventListener("compositionend", handleCompositionEnd);
+      sourceInputs.forEach(function (input) {{
+        input.addEventListener("change", function () {{
+          if (input.disabled) {{
+            return;
+          }}
+          submitForm();
+        }});
+      }});
       form.addEventListener("submit", function () {{
         isSubmitting = true;
         clearScheduledSubmit();
@@ -978,7 +1070,9 @@ SETTINGS_PAGE_TEMPLATE = """<!doctype html>
 
 class LawSearchHandler(BaseHTTPRequestHandler):
     db_path = str(DEFAULT_DB_PATH)
+    kokuji_db_path = str(DEFAULT_KOKUJI_PATH)
     LAW_DISPLAY_LABELS = {}
+    VALID_SOURCES = {"law", "kokuji"}
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -1002,27 +1096,35 @@ class LawSearchHandler(BaseHTTPRequestHandler):
 
     def _handle_search_page(self, parsed):
         article_query, body_query = self._parse_search_inputs(parsed.query)
+        requested_source = self._parse_source(parsed.query)
+        source_state = self._get_kokuji_source_state()
+        source, source_warning = self._resolve_source(requested_source, source_state)
+        query = self._display_query(article_query, body_query)
+
         rows = []
-        warning = ""
-        if article_query and body_query:
-            rows, warning = self.search_article_with_body_keyword(article_query, body_query)
-        else:
-            search_mode, active_query = self._select_search_query(article_query, body_query)
-            if search_mode == "article":
-                rows, warning = self.search_article(active_query)
-            elif search_mode == "body":
-                rows, warning = self.search_body(active_query)
-        if article_query or body_query:
-            meta = self._build_meta(rows, warning)
+        warning_parts = [part for part in [source_warning] if part]
+        if query:
+            if source == "kokuji":
+                rows, warning = self.search_kokuji_notice(query, source_state)
+            else:
+                rows, warning = self.search_law_inputs(article_query, body_query)
+            if warning:
+                warning_parts.append(warning)
+
+        if query:
+            meta = self._build_meta(rows, " / ".join(warning_parts))
         else:
             meta = "キーワードを入力してください"
 
         body = SEARCH_PAGE_TEMPLATE.format(
-            article_query=html.escape(article_query),
-            body_query=html.escape(body_query),
+            query=html.escape(query),
+            law_checked=" checked" if source == "law" else "",
+            kokuji_checked=" checked" if source == "kokuji" else "",
+            kokuji_disabled=" disabled" if not source_state["enabled"] else "",
+            source_note=html.escape(source_state["note"]),
             meta=html.escape(meta),
-            meta_actions=self._render_meta_actions(rows, article_query, body_query),
-            table=self.render_table(rows),
+            meta_actions=self._render_meta_actions(rows, article_query, body_query, source=source),
+            table=self.render_results(rows, source=source),
         ).encode("utf-8")
         self._send_html(body)
 
@@ -1130,6 +1232,19 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             body_query = legacy_query
         return article_query, body_query
 
+    @classmethod
+    def _parse_source(cls, query_string: str) -> str:
+        params = parse_qs(query_string)
+        return cls._normalize_source(params.get("source", ["law"])[0].strip())
+
+    @classmethod
+    def _normalize_source(cls, source: str) -> str:
+        return source if source in cls.VALID_SOURCES else "law"
+
+    @staticmethod
+    def _display_query(article_query: str, body_query: str) -> str:
+        return body_query or article_query
+
     @staticmethod
     def _select_search_query(article_query: str, body_query: str) -> Tuple[str, str]:
         if article_query:
@@ -1138,12 +1253,48 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             return "body", body_query
         return "", ""
 
+    @classmethod
+    def _is_probable_article_query(cls, query: str) -> bool:
+        if not query:
+            return False
+        _variants, parsed_article = cls._article_query_variants(query)
+        main_num, _branch_num = parsed_article
+        return main_num is not None
+
     @staticmethod
     def _build_meta(rows, warning: str) -> str:
         meta = f"{len(rows)}件ヒット"
         if warning:
             meta = f"{meta}（{warning}）"
         return meta
+
+    def _get_kokuji_source_state(self) -> dict[str, object]:
+        source_info = get_source_status("kokuji", Path(self.db_path))
+        db_ok, db_message = get_kokuji_db_status(self.kokuji_db_path)
+        active = bool(source_info["is_active"])
+        enabled = active and db_ok
+
+        if enabled:
+            note = ""
+        elif not active:
+            note = "告示検索は現在無効です"
+        else:
+            note = db_message
+
+        return {
+            "active": active,
+            "db_ok": db_ok,
+            "enabled": enabled,
+            "note": note,
+        }
+
+    @staticmethod
+    def _resolve_source(requested_source: str, source_state: dict[str, object]) -> Tuple[str, str]:
+        if requested_source != "kokuji":
+            return "law", ""
+        if source_state["enabled"]:
+            return "kokuji", ""
+        return "law", str(source_state["note"])
 
     def _connect_search_db(self) -> Tuple[Optional[sqlite3.Connection], str]:
         db_path = Path(self.db_path)
@@ -1169,6 +1320,30 @@ class LawSearchHandler(BaseHTTPRequestHandler):
 
     def search(self, query: str):
         return self.search_body(query)
+
+    def search_law_inputs(self, article_query: str, body_query: str):
+        if article_query and body_query:
+            return self.search_article_with_body_keyword(article_query, body_query)
+
+        search_mode, active_query = self._select_search_query(article_query, body_query)
+        if search_mode == "body" and self._is_probable_article_query(active_query):
+            search_mode = "article"
+        if search_mode == "article":
+            return self.search_article(active_query)
+        if search_mode == "body":
+            return self.search_body(active_query)
+        return [], ""
+
+    def search_kokuji_notice(self, query: str, source_state: Optional[dict[str, object]] = None):
+        state = source_state or self._get_kokuji_source_state()
+        if not state["enabled"]:
+            return [], str(state["note"])
+        try:
+            payload = search_kokuji(Path(self.kokuji_db_path), query=query, limit=100)
+        except (FileNotFoundError, KeyError, ValueError):
+            return [], "告示DBを開けません"
+        warning = " / ".join(payload.get("warnings", []))
+        return payload["results"], warning
 
     def search_article_with_body_keyword(self, article_query: str, body_query: str):
         rows, warning = self.search_article(article_query)
@@ -1204,7 +1379,10 @@ class LawSearchHandler(BaseHTTPRequestHandler):
                 branchable_variants = [variant for variant in article_variants if "条" in variant]
                 where_parts.extend(["a.article_no LIKE ?" for _ in branchable_variants])
                 params.extend([f"{variant}の%" for variant in branchable_variants])
-            rows = conn.execute(sql.format(where_clause="\n               OR ".join(where_parts)), params).fetchall()
+            try:
+                rows = conn.execute(sql.format(where_clause="\n               OR ".join(where_parts)), params).fetchall()
+            except sqlite3.OperationalError:
+                return [], "法令DBを検索できません"
             return self._format_result_rows(rows), ""
 
     def search_body(self, query: str):
@@ -1246,7 +1424,10 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         """
 
         with closing(conn):
-            like_rows = conn.execute(like_sql, (f"%{query}%", f"%{query}%")).fetchall()
+            try:
+                like_rows = conn.execute(like_sql, (f"%{query}%", f"%{query}%")).fetchall()
+            except sqlite3.OperationalError:
+                return [], "法令DBを検索できません"
             if like_rows:
                 return [
                     (
@@ -1360,8 +1541,8 @@ class LawSearchHandler(BaseHTTPRequestHandler):
     def _display_law_name(cls, law_name: str, provision_kind: str) -> str:
         return cls.LAW_DISPLAY_LABELS.get((law_name, provision_kind), law_name)
 
-    def _render_meta_actions(self, rows, article_query: str = "", body_query: str = "") -> str:
-        if not rows:
+    def _render_meta_actions(self, rows, article_query: str = "", body_query: str = "", source: str = "law") -> str:
+        if not rows or source != "law":
             return ""
         copy_text = html.escape(self._build_bulk_copy_text(rows, article_query, body_query), quote=True)
         return (
@@ -1456,6 +1637,36 @@ class LawSearchHandler(BaseHTTPRequestHandler):
                 f"<td class='law'>{html.escape(law_name)}</td>"
                 f"<td class='article'>{html.escape(display_article_no)}</td>"
                 f"<td class='{body_class}'>{body_html}</td>"
+                "</tr>"
+            )
+        lines.append("</tbody></table>")
+        return "\n".join(lines)
+
+    def render_results(self, rows, source: str = "law") -> str:
+        if source == "kokuji":
+            return self.render_kokuji_table(rows)
+        return self.render_table(rows)
+
+    def render_kokuji_table(self, rows):
+        if not rows:
+            return "<div class='empty'>該当する告示が見つかりませんでした。検索語を変えて再度お試しください。</div>"
+
+        lines = [
+            "<table>",
+            "<thead><tr><th>種別</th><th>告示名</th><th>告示番号</th><th>機関</th><th>抜粋</th><th>リンク</th></tr></thead>",
+            "<tbody>",
+        ]
+        for row in rows:
+            url = (row.get("url") or "").strip()
+            link_html = f"<a href='{html.escape(url, quote=True)}' target='_blank' rel='noreferrer'>原本</a>" if url else ""
+            lines.append(
+                "<tr>"
+                "<td class='law'>告示</td>"
+                f"<td>{html.escape(row.get('notice_name', ''))}</td>"
+                f"<td class='article'>{html.escape(row.get('document_number', ''))}</td>"
+                f"<td>{html.escape(row.get('organization', ''))}</td>"
+                f"<td class='body'>{html.escape(row.get('snippet', ''))}</td>"
+                f"<td>{link_html}</td>"
                 "</tr>"
             )
         lines.append("</tbody></table>")
