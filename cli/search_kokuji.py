@@ -27,7 +27,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Search bundled kokuji notices and output JSON.")
     parser.add_argument("--db", default=str(DEFAULT_DB_PATH), help="Path to kokuji_notices.db")
     parser.add_argument("--registry-db", default=str(DEFAULT_REGISTRY_DB_PATH), help="Path to source registry DB")
-    parser.add_argument("--query", required=True, help="Keyword query for kokuji notices")
+    parser.add_argument("--query", default="", help="Keyword query for kokuji notices")
+    parser.add_argument("--notice-number", default="", help="Notice number query such as 294 or 第294号")
     parser.add_argument("--limit", type=int, default=20, help="Maximum number of results")
     parser.add_argument("--json", action="store_true", help="Print compact JSON")
     parser.add_argument("--json-pretty", action="store_true", help="Print indented JSON")
@@ -52,6 +53,9 @@ def main() -> int:
     args = parse_args()
     db_path = Path(args.db)
     registry_db_path = Path(args.registry_db)
+    if not args.query and not args.notice_number:
+        print("Either --query or --notice-number is required.")
+        return 1
     if not is_source_active("kokuji", registry_db_path):
         payload = build_inactive_payload(db_path, args.query, args.limit)
     else:
@@ -59,6 +63,7 @@ def main() -> int:
             payload = search_kokuji(
                 db_path,
                 query=args.query,
+                notice_number=args.notice_number,
                 limit=args.limit,
             )
         except (FileNotFoundError, KeyError, ValueError) as exc:

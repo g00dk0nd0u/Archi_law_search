@@ -18,15 +18,31 @@ from source_registry import ensure_source_registry, get_source_status, is_source
 from web_app import LawSearchHandler  # type: ignore
 
 
-def create_sample_kokuji_db(db_path: pathlib.Path) -> None:
+def create_sample_kokuji_db(db_path: pathlib.Path, *, with_native_number_columns: bool = False) -> None:
     conn = sqlite3.connect(str(db_path))
     try:
+        extra_columns = ""
+        insert_columns = ""
+        first_extra_values: tuple[object, ...] = ()
+        second_extra_values: tuple[object, ...] = ()
+        if with_native_number_columns:
+            extra_columns = """
+                document_number_norm TEXT,
+                document_number_digits TEXT,
+                content_type TEXT,
+            """
+            insert_columns = "document_number_norm, document_number_digits, content_type,"
+            first_extra_values = ("第1号", "1", "application/pdf")
+            second_extra_values = ("第294号", "294", "application/pdf")
         conn.execute(
             """
             CREATE TABLE notices (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 notice_name TEXT NOT NULL,
                 document_number TEXT,
+                """
+            + extra_columns
+            + """
                 document_date TEXT,
                 organization TEXT,
                 url TEXT UNIQUE,
@@ -55,15 +71,20 @@ def create_sample_kokuji_db(db_path: pathlib.Path) -> None:
         conn.execute(
             """
             INSERT INTO notices(
-                notice_name, document_number, document_date, organization, url,
+                notice_name, document_number, """
+            + insert_columns
+            + """ document_date, organization, url,
                 match_reason, fetch_status, text_status, full_text,
                 text_char_count, page_count, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, """
+            + ("?, ?, ?, " if with_native_number_columns else "")
+            + """?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 "準不燃材料を定める件",
                 "国土交通省告示第1号",
+                *first_extra_values,
                 "2026-01-01",
                 "国土交通省住宅局建築指導課",
                 "https://example.com/jun.pdf",
@@ -79,15 +100,20 @@ def create_sample_kokuji_db(db_path: pathlib.Path) -> None:
         conn.execute(
             """
             INSERT INTO notices(
-                notice_name, document_number, document_date, organization, url,
+                notice_name, document_number, """
+            + insert_columns
+            + """ document_date, organization, url,
                 match_reason, fetch_status, text_status, full_text,
                 text_char_count, page_count, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, """
+            + ("?, ?, ?, " if with_native_number_columns else "")
+            + """?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 "防火設備の構造方法を定める件",
                 "国土交通省告示第二百九十四号",
+                *second_extra_values,
                 "2026-02-01",
                 "国土交通省住宅局建築指導課",
                 "https://example.com/294.pdf",
@@ -131,17 +157,72 @@ class KokujiIntegrationTests(unittest.TestCase):
         self.assertIn("準不燃", payload["results"][0]["snippet"])
 
     def test_search_kokuji_matches_notice_number_variants(self):
-        queries = ["294", "294号", "告示第294号", "防火設備"]
+        queries = ["294", "294号", "告示第294号", "建設省告示第294号", "国土交通省告示第294号"]
         with tempfile.NamedTemporaryFile(suffix=".db") as tf:
-            create_sample_kokuji_db(pathlib.Path(tf.name))
+            create_sample_kokuji_db(pathlib.Path(tf.name), with_native_number_columns=True)
             for query in queries:
-                payload = search_kokuji(pathlib.Path(tf.name), query=query, limit=10)
+                payload = search_kokuji(pathlib.Path(tf.name), notice_number=query, limit=10)
                 self.assertGreaterEqual(payload["count"], 1, query)
                 self.assertTrue(
                     any(result["document_number"] == "国土交通省告示第二百九十四号" for result in payload["results"]),
                     query,
                 )
                 self.assertTrue(payload["highlight_terms"])
+                self.assertEqual(payload["results"][0]["display_document_number"], "第294号")
+
+    def test_search_kokuji_combines_notice_number_and_keyword(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as tf:
+            create_sample_kokuji_db(pathlib.Path(tf.name), with_native_number_columns=True)
+            payload = search_kokuji(pathlib.Path(tf.name), query="排煙", notice_number="294", limit=10)
+
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["results"][0]["display_document_number"], "第294号")
+        self.assertIn("排煙", payload["results"][0]["snippet"])
+
+    def test_search_kokuji_old_db_fallback_still_works(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as tf:
+            create_sample_kokuji_db(pathlib.Path(tf.name), with_native_number_columns=False)
+            payload = search_kokuji(pathlib.Path(tf.name), notice_number="294", limit=10)
+
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["results"][0]["document_number"], "国土交通省告示第二百九十四号")
+
+    def test_search_kokuji_cli_supports_notice_number_option(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = pathlib.Path(tmpdir)
+            kokuji_db = tmp_path / "kokuji.db"
+            registry_db = tmp_path / "laws.db"
+            create_sample_kokuji_db(kokuji_db, with_native_number_columns=True)
+            conn = sqlite3.connect(str(registry_db))
+            try:
+                conn.row_factory = sqlite3.Row
+                ensure_source_registry(conn)
+                conn.commit()
+            finally:
+                conn.close()
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "cli.search_kokuji",
+                    "--db",
+                    str(kokuji_db),
+                    "--registry-db",
+                    str(registry_db),
+                    "--notice-number",
+                    "294",
+                    "--limit",
+                    "10",
+                ],
+                capture_output=True,
+                text=True,
+                cwd=ROOT,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0)
+        self.assertIn('"notice_number": "294"', result.stdout)
 
     def test_import_kokuji_db_copies_sqlite_file(self):
         with tempfile.TemporaryDirectory() as tmpdir:
