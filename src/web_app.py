@@ -18,6 +18,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import List, Optional, Set, Tuple
 from urllib.parse import parse_qs, urlencode, urlparse
 
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 if __package__ in (None, ""):
     from kokuji_database import DEFAULT_KOKUJI_DB_PATH, detect_link_label, get_kokuji_db_status, get_kokuji_text_by_id, search_kokuji
     from law_database import LawSource, connect_db, delete_law, ensure_db, fts5_enabled, law_exists, list_installed_law_ids, replace_law
@@ -33,9 +37,9 @@ else:
     from .number_text_utils import int_to_kanji, normalize_num, normalize_separators
     from .source_registry import get_source_status
 
-DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "laws.db"
+DEFAULT_DB_PATH = REPO_ROOT / "data" / "laws.db"
 DEFAULT_KOKUJI_PATH = DEFAULT_KOKUJI_DB_PATH
-DEFAULT_EXPORTS_DIR = Path(__file__).resolve().parent.parent / "output" / "exports"
+DEFAULT_EXPORTS_DIR = REPO_ROOT / "output" / "exports"
 DOWNLOAD_RESULTS_LIMIT = 100
 
 SEARCH_PAGE_TEMPLATE = """<!doctype html>
@@ -511,7 +515,8 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       outline: none;
     }}
     .kokuji-link-stack .copy-button {{
-      position: static;
+      position: relative;
+      display: inline-flex;
       flex: 0 0 auto;
     }}
     .kokuji-copy-button:disabled {{
@@ -659,6 +664,7 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       const sourceInputs = Array.from(document.querySelectorAll("input[name='source']"));
       const themeToggle = document.querySelector("[data-theme-toggle]");
       const themeIcon = themeToggle ? themeToggle.querySelector(".theme-toggle-icon") : null;
+      const focusStorageKey = "archi-law-search-focus";
 
       const THEME_STORAGE_KEY = "archi-law-search-theme";
       const getPreferredTheme = function () {{
@@ -734,6 +740,66 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       let timerId = null;
       let isComposing = false;
       let isSubmitting = false;
+      window.__suppressShutdownOnUnload = false;
+
+      const isLocalShutdownHost = function () {{
+        return ["127.0.0.1", "localhost", "::1"].indexOf(window.location.hostname) >= 0;
+      }};
+
+      const persistFocusState = function (input) {{
+        if (!input || !input.name) {{
+          return;
+        }}
+        try {{
+          sessionStorage.setItem(
+            focusStorageKey,
+            JSON.stringify({{
+              name: input.name,
+              selectionStart: typeof input.selectionStart === "number" ? input.selectionStart : null,
+              selectionEnd: typeof input.selectionEnd === "number" ? input.selectionEnd : null,
+            }})
+          );
+        }} catch (_error) {{
+        }}
+      }};
+
+      const persistActiveFocusState = function () {{
+        const activeElement = document.activeElement;
+        if (!(activeElement instanceof HTMLInputElement)) {{
+          return;
+        }}
+        if (activeElement.form !== form) {{
+          return;
+        }}
+        persistFocusState(activeElement);
+      }};
+
+      const restoreFocusState = function () {{
+        let savedState = null;
+        try {{
+          savedState = JSON.parse(sessionStorage.getItem(focusStorageKey) || "null");
+        }} catch (_error) {{
+          savedState = null;
+        }}
+        if (!savedState || !savedState.name) {{
+          return;
+        }}
+        const target = form.querySelector("input[name='" + savedState.name + "']");
+        if (!(target instanceof HTMLInputElement)) {{
+          return;
+        }}
+        target.focus();
+        const valueLength = target.value.length;
+        const start =
+          typeof savedState.selectionStart === "number" ? Math.min(savedState.selectionStart, valueLength) : valueLength;
+        const end = typeof savedState.selectionEnd === "number" ? Math.min(savedState.selectionEnd, valueLength) : start;
+        try {{
+          target.setSelectionRange(start, end);
+        }} catch (_error) {{
+        }}
+      }};
+
+      restoreFocusState();
 
       const clearScheduledSubmit = function () {{
         if (timerId !== null) {{
@@ -771,6 +837,8 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
           return;
         }}
         isSubmitting = true;
+        window.__suppressShutdownOnUnload = true;
+        persistActiveFocusState();
         clearScheduledSubmit();
         if (typeof form.requestSubmit === "function") {{
           form.requestSubmit();
@@ -803,6 +871,15 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
       }};
 
       [numberInput, queryInput].forEach(function (input) {{
+        input.addEventListener("focus", function () {{
+          persistFocusState(input);
+        }});
+        input.addEventListener("click", function () {{
+          persistFocusState(input);
+        }});
+        input.addEventListener("keyup", function () {{
+          persistFocusState(input);
+        }});
         input.addEventListener("input", scheduleSubmit);
         input.addEventListener("compositionstart", handleCompositionStart);
         input.addEventListener("compositionend", handleCompositionEnd);
@@ -812,13 +889,39 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
           if (input.disabled) {{
             return;
           }}
+          persistFocusState(numberInput);
           updateQueryPresentation();
           submitForm();
         }});
       }});
       form.addEventListener("submit", function () {{
         isSubmitting = true;
+        window.__suppressShutdownOnUnload = true;
+        persistActiveFocusState();
         clearScheduledSubmit();
+      }});
+
+      document.querySelectorAll(".text-download-button, .nav-link[href='/settings']").forEach(function (element) {{
+        element.addEventListener("click", function () {{
+          window.__suppressShutdownOnUnload = true;
+          persistActiveFocusState();
+        }});
+      }});
+
+      window.addEventListener("pagehide", function () {{
+        if (!isLocalShutdownHost()) {{
+          return;
+        }}
+        if (window.__suppressShutdownOnUnload) {{
+          return;
+        }}
+        if (typeof navigator.sendBeacon !== "function") {{
+          return;
+        }}
+        try {{
+          navigator.sendBeacon("/shutdown", "");
+        }} catch (_error) {{
+        }}
       }});
 
       document.querySelectorAll("td.body.is-expandable").forEach(function (cell) {{
@@ -1234,6 +1337,7 @@ SETTINGS_PAGE_TEMPLATE = """<!doctype html>
       const themeToggle = document.querySelector("[data-theme-toggle]");
       const themeIcon = themeToggle ? themeToggle.querySelector(".theme-toggle-icon") : null;
       const THEME_STORAGE_KEY = "archi-law-search-theme";
+      window.__suppressShutdownOnUnload = false;
       const getPreferredTheme = function () {{
         const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
         if (savedTheme === "light" || savedTheme === "dark") {{
@@ -1270,6 +1374,35 @@ SETTINGS_PAGE_TEMPLATE = """<!doctype html>
           applyTheme(nextTheme, true);
         }});
       }}
+
+      const isLocalShutdownHost = function () {{
+        return ["127.0.0.1", "localhost", "::1"].indexOf(window.location.hostname) >= 0;
+      }};
+
+      document.querySelectorAll(".nav-link[href='/'], .actions form").forEach(function (element) {{
+        element.addEventListener("click", function () {{
+          window.__suppressShutdownOnUnload = true;
+        }});
+        element.addEventListener("submit", function () {{
+          window.__suppressShutdownOnUnload = true;
+        }});
+      }});
+
+      window.addEventListener("pagehide", function () {{
+        if (!isLocalShutdownHost()) {{
+          return;
+        }}
+        if (window.__suppressShutdownOnUnload) {{
+          return;
+        }}
+        if (typeof navigator.sendBeacon !== "function") {{
+          return;
+        }}
+        try {{
+          navigator.sendBeacon("/shutdown", "");
+        }} catch (_error) {{
+        }}
+      }});
     }});
   </script>
 </body>
@@ -1696,6 +1829,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         highlight_terms = payload.get("highlight_terms", [])
         notice_digits = "".join(re.findall(r"\d+", normalize_num(notice_number_query or "")))
         number_highlight_terms = [notice_digits] if notice_digits else []
+        body_highlight_terms = list(dict.fromkeys([*highlight_terms, *number_highlight_terms]))
         rows = [
             {
                 **row,
@@ -1712,6 +1846,12 @@ class LawSearchHandler(BaseHTTPRequestHandler):
                 "document_number_norm": self._highlight_text_multi(row.get("document_number_norm", ""), highlight_terms),
                 "document_number_digits": self._highlight_text_multi(row.get("document_number_digits", ""), highlight_terms),
                 "snippet": self._highlight_text_multi(row.get("snippet", ""), highlight_terms),
+                "full_text_html": self._highlight_text_multi(row.get("full_text", ""), body_highlight_terms),
+                "body_preview_html": self._build_collapsed_body_preview(
+                    self._highlight_text_multi(row.get("full_text", ""), body_highlight_terms)
+                )
+                if (row.get("full_text") or "").strip()
+                else self._highlight_text_multi(row.get("snippet", ""), body_highlight_terms),
             }
             for row in payload["results"]
         ]
@@ -1745,6 +1885,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
 
         with closing(conn):
             article_variants, parsed_article = self._article_query_variants(query)
+            highlight_terms = self._article_highlight_terms(query)
             main_num, branch_num = parsed_article
             where_parts = ["a.article_no = ?" for _ in article_variants]
             params = list(article_variants)
@@ -1756,7 +1897,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
                 rows = conn.execute(sql.format(where_clause="\n               OR ".join(where_parts)), params).fetchall()
             except sqlite3.OperationalError:
                 return [], "法令DBを検索できません"
-            return self._format_result_rows(rows), ""
+            return self._format_result_rows(rows, highlight_terms=highlight_terms), ""
 
     def search_body(self, query: str):
         tokens = self._tokenize_search_terms(query)
@@ -1862,6 +2003,14 @@ class LawSearchHandler(BaseHTTPRequestHandler):
     def _build_copy_text(cls, law_name: str, article_no: str, full_body: str) -> str:
         return "\n".join([law_name, article_no, cls._plain_text_for_copy(full_body)])
 
+    @staticmethod
+    def _unpack_result_row(row):
+        if len(row) >= 5:
+            law_name, article_no, body, full_body, display_article_html = row[:5]
+            return law_name, article_no, body, full_body, display_article_html
+        law_name, article_no, body, full_body = row[:4]
+        return law_name, article_no, body, full_body, ""
+
     @classmethod
     def _build_bulk_copy_text(cls, rows, article_query: str = "", body_query: str = "") -> str:
         condition_lines = [
@@ -1869,7 +2018,10 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             f"条番号: {article_query or 'なし'}",
             f"本文キーワード: {body_query or 'なし'}",
         ]
-        blocks = [cls._build_copy_text(law_name, article_no, full_body) for law_name, article_no, _body, full_body in rows]
+        blocks = []
+        for row in rows:
+            law_name, article_no, _body, full_body, _display_article_html = cls._unpack_result_row(row)
+            blocks.append(cls._build_copy_text(law_name, article_no, full_body))
         if not blocks:
             return "\n".join(condition_lines)
         return "\n".join(condition_lines) + "\n\n" + "\n\n".join(blocks)
@@ -1906,9 +2058,8 @@ class LawSearchHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _display_export_path(export_path: Path) -> str:
-        repo_root = Path(__file__).resolve().parent.parent
         try:
-            return str(export_path.relative_to(repo_root))
+            return str(export_path.relative_to(REPO_ROOT))
         except ValueError:
             return str(export_path)
 
@@ -2082,11 +2233,13 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         return cls._quote_fts_term((query or "").strip())
 
     @classmethod
-    def _build_collapsed_body_preview(cls, body_text: str, max_lines: int = 8) -> str:
+    def _build_collapsed_body_preview(cls, body_text: str, max_lines: int = 5) -> str:
         lines = (body_text or "").splitlines()
         if len(lines) <= max_lines:
             return body_text or ""
-        return "\n".join(lines[:max_lines])
+        preview_lines = lines[:max_lines]
+        preview_lines[-1] = preview_lines[-1].rstrip() + "…"
+        return "\n".join(preview_lines)
 
     @classmethod
     def _build_like_snippet(cls, body_text: str, query: str, radius: int = 80) -> str:
@@ -2167,9 +2320,20 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         return f"<a class='text-download-button' href='{html.escape(href, quote=True)}'>TXT保存</a>"
 
     @classmethod
-    def _format_result_rows(cls, rows, body_index: int = 3, full_body_index: Optional[int] = None):
+    def _format_result_rows(
+        cls,
+        rows,
+        body_index: int = 3,
+        full_body_index: Optional[int] = None,
+        highlight_terms: Optional[List[str]] = None,
+    ):
         return [
-            cls._format_result_row(row, body_index=body_index, full_body_index=full_body_index)
+            cls._format_result_row(
+                row,
+                body_index=body_index,
+                full_body_index=full_body_index,
+                highlight_terms=highlight_terms,
+            )
             for row in rows
         ]
 
@@ -2177,23 +2341,34 @@ class LawSearchHandler(BaseHTTPRequestHandler):
     def _filter_article_rows_by_body_keyword(cls, rows, body_query: str):
         filtered_rows = []
         terms = cls._tokenize_search_terms(body_query)
-        for law_name, article_no, body, full_body in rows:
+        for row in rows:
+            law_name, article_no, _body, full_body, display_article_html = cls._unpack_result_row(row)
             plain_full_body = cls._plain_text_for_copy(full_body)
             if not terms or any(term not in plain_full_body for term in terms):
                 continue
             highlighted_full_body = cls._highlight_text_multi(full_body, terms)
             preview_body = cls._build_collapsed_body_preview(highlighted_full_body)
-            filtered_rows.append((law_name, article_no, preview_body, highlighted_full_body))
+            filtered_rows.append((law_name, article_no, preview_body, highlighted_full_body, display_article_html))
         return filtered_rows
 
     @classmethod
-    def _format_result_row(cls, row, body_index: int = 3, full_body_index: Optional[int] = None):
+    def _format_result_row(
+        cls,
+        row,
+        body_index: int = 3,
+        full_body_index: Optional[int] = None,
+        highlight_terms: Optional[List[str]] = None,
+    ):
         law_name, provision_kind, article_no = row[:3]
         body = row[body_index]
         full_body = body if full_body_index is None else row[full_body_index]
-        if full_body_index is None:
-            body = cls._build_collapsed_body_preview(body)
-        return (cls._display_law_name(law_name, provision_kind), article_no, body, full_body)
+        display_article_no = cls._display_article_no(article_no)
+        display_article_html = display_article_no
+        if highlight_terms:
+            display_article_html = cls._highlight_text_multi(display_article_no, highlight_terms)
+            full_body = cls._highlight_text_multi(full_body, highlight_terms)
+        body = cls._build_collapsed_body_preview(full_body) if full_body_index is None else body
+        return (cls._display_law_name(law_name, provision_kind), article_no, body, full_body, display_article_html)
 
     @staticmethod
     def _display_article_no(article_no: str) -> str:
@@ -2231,31 +2406,82 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         add(f"第{int_to_kanji(main_num)}条の{int_to_kanji(branch_int)}")
         return variants, (main_num, branch_int)
 
+    @classmethod
+    def _article_highlight_terms(cls, query: str) -> List[str]:
+        _variants, parsed_article = cls._article_query_variants(query)
+        main_num, branch_num = parsed_article
+        if main_num is None:
+            return []
+
+        main_digits = str(main_num)
+        main_kanji = int_to_kanji(main_num)
+        terms: List[str] = [
+            f"第{main_digits}条",
+            f"{main_digits}条",
+            f"第{main_kanji}条",
+            f"{main_kanji}条",
+        ]
+        if branch_num is not None:
+            branch_digits = str(branch_num)
+            branch_kanji = int_to_kanji(branch_num)
+            terms.extend(
+                [
+                    f"第{main_digits}条の{branch_digits}",
+                    f"{main_digits}条の{branch_digits}",
+                    f"第{main_digits}条の{branch_kanji}",
+                    f"{main_digits}条の{branch_kanji}",
+                    f"第{main_kanji}条の{branch_digits}",
+                    f"{main_kanji}条の{branch_digits}",
+                    f"第{main_kanji}条の{branch_kanji}",
+                    f"{main_kanji}条の{branch_kanji}",
+                ]
+            )
+        return list(dict.fromkeys(terms))
+
+    @classmethod
+    def _build_body_cell_html(
+        cls,
+        preview_text: str,
+        full_text: str,
+        *,
+        copy_text: str = "",
+        copy_button_hidden_when_collapsed: bool = True,
+    ) -> str:
+        safe_preview = cls._safe_snippet(preview_text)
+        safe_full = cls._safe_snippet(full_text)
+        is_expandable = safe_preview != safe_full
+        copy_button_html = ""
+        if copy_text:
+            safe_copy_text = html.escape(copy_text, quote=True)
+            copy_hidden_attr = " hidden" if is_expandable and copy_button_hidden_when_collapsed else ""
+            copy_button_html = (
+                "<span class='copy-feedback body-copy-feedback' hidden>コピー済み</span>"
+                f"<button type='button' class='copy-button' title='コピー' data-copy-text='{safe_copy_text}'{copy_hidden_attr}></button>"
+            )
+        body_html = f"<div class='body-wrap'>{copy_button_html}<div class='body-preview'>{safe_preview}</div>"
+        if is_expandable:
+            body_html += f"<div class='body-full' hidden>{safe_full}</div>"
+        body_html += "</div>"
+        return body_html
+
     def render_table(self, rows):
         if not rows:
             return "<div class='empty'>該当する条文が見つかりませんでした。検索語を変えて再度お試しください。</div>"
         lines = ["<table>", "<thead><tr><th>法令</th><th>条</th><th>本文</th></tr></thead>", "<tbody>"]
-        for law_name, article_no, body, full_body in rows:
-            safe_body = self._safe_snippet(body)
-            safe_full_body = self._safe_snippet(full_body)
-            is_expandable = safe_body != safe_full_body
+        for row in rows:
+            law_name, article_no, body, full_body, display_article_html = self._unpack_result_row(row)
+            is_expandable = self._safe_snippet(body) != self._safe_snippet(full_body)
             body_class = "body is-expandable" if is_expandable else "body"
-            copy_text = html.escape(self._build_copy_text(law_name, article_no, full_body), quote=True)
-            copy_hidden_attr = " hidden" if is_expandable else ""
-            body_html = (
-                "<div class='body-wrap'>"
-                f"<span class='copy-feedback body-copy-feedback' hidden>コピー済み</span>"
-                f"<button type='button' class='copy-button' title='コピー' data-copy-text='{copy_text}'{copy_hidden_attr}></button>"
-                f"<div class='body-preview'>{safe_body}</div>"
+            body_html = self._build_body_cell_html(
+                body,
+                full_body,
+                copy_text=self._build_copy_text(law_name, article_no, full_body),
             )
-            if is_expandable:
-                body_html += f"<div class='body-full' hidden>{safe_full_body}</div>"
-            body_html += "</div>"
-            display_article_no = self._display_article_no(article_no)
+            article_html = display_article_html or html.escape(self._display_article_no(article_no))
             lines.append(
                 "<tr>"
                 f"<td class='law'>{html.escape(law_name)}</td>"
-                f"<td class='article'>{html.escape(display_article_no)}</td>"
+                f"<td class='article'>{article_html}</td>"
                 f"<td class='{body_class}'>{body_html}</td>"
                 "</tr>"
             )
@@ -2276,7 +2502,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
 
         lines = [
             "<table>",
-            "<thead><tr><th>告示番号</th><th>告示名</th><th>抜粋</th><th>リンク</th></tr></thead>",
+            "<thead><tr><th>告示番号</th><th>告示名</th><th>本文</th><th>リンク</th></tr></thead>",
             "<tbody>",
         ]
         for row in rows:
@@ -2298,7 +2524,11 @@ class LawSearchHandler(BaseHTTPRequestHandler):
                     or ""
                 )
             )
-            safe_snippet = self._safe_snippet(row.get("snippet", ""))
+            full_text = row.get("full_text_html") or row.get("full_text") or ""
+            preview_text = row.get("body_preview_html") or row.get("snippet", "")
+            body_html = self._build_body_cell_html(preview_text, full_text or preview_text)
+            is_expandable = self._safe_snippet(preview_text) != self._safe_snippet(full_text or preview_text)
+            body_class = "body kokuji-snippet is-expandable" if is_expandable else "body kokuji-snippet"
             organization = (row.get("organization") or "").strip()
             organization_html = f"<div class='kokuji-meta'>{html.escape(organization)}</div>" if organization else ""
             document_year = self._extract_document_year(row.get("document_date", ""))
@@ -2316,7 +2546,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
                 "<tr>"
                 f"<td class='article kokuji-number'>{safe_document_number}</td>"
                 f"<td class='kokuji-name'>{safe_notice_name}{organization_html}{year_html}</td>"
-                f"<td class='body kokuji-snippet'>{safe_snippet}</td>"
+                f"<td class='{body_class}'>{body_html}</td>"
                 f"<td class='kokuji-link-cell'>{link_stack}</td>"
                 "</tr>"
             )

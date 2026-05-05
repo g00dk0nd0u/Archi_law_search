@@ -444,7 +444,7 @@ class DatabaseAndWebTests(unittest.TestCase):
                 [("建築基準法", "第6条"), ("建築基準法施行令", "第6条")],
             )
             self.assertIn("建築物の建築等に関する申請及び確認。", rows_six[0][2])
-            self.assertIn("建築基準法施行令の第六条本文。", rows_six[1][2])
+            self.assertIn("建築基準法施行令の<mark>第六条</mark>本文。", rows_six[1][2])
             self.assertNotIn("建築基準法・附則", [row[0] for row in rows_six])
 
             # 日本語の部分一致でもヒットする
@@ -826,6 +826,12 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn('document.addEventListener("DOMContentLoaded"', html_doc)
         self.assertIn("compositionstart", html_doc)
         self.assertIn("compositionend", html_doc)
+        self.assertIn('const focusStorageKey = "archi-law-search-focus";', html_doc)
+        self.assertIn("sessionStorage.setItem(", html_doc)
+        self.assertIn("sessionStorage.getItem(focusStorageKey)", html_doc)
+        self.assertIn("window.__suppressShutdownOnUnload = false;", html_doc)
+        self.assertIn('navigator.sendBeacon("/shutdown", "")', html_doc)
+        self.assertIn('document.querySelectorAll(".text-download-button, .nav-link[href=\'/settings\']")', html_doc)
         self.assertIn("const numberValue = numberInput.value.trim();", html_doc)
         self.assertIn("if (!numberValue && !queryValue) {", html_doc)
         self.assertIn("return true;", html_doc)
@@ -893,7 +899,7 @@ class DatabaseAndWebTests(unittest.TestCase):
             ],
         )
 
-        self.assertIn("<th>告示番号</th><th>告示名</th><th>抜粋</th><th>リンク</th>", table_html)
+        self.assertIn("<th>告示番号</th><th>告示名</th><th>本文</th><th>リンク</th>", table_html)
         self.assertNotIn("<th>種別</th>", table_html)
         self.assertIn("国土交通省告示<br>第1436号", table_html)
         self.assertLess(table_html.index("第1436号"), table_html.index("防火設備の構造方法を定める件"))
@@ -901,6 +907,9 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn(">PDF<", table_html)
         self.assertIn("class='copy-button kokuji-copy-button'", table_html)
         self.assertLess(table_html.index(">PDF<"), table_html.index("class='copy-button kokuji-copy-button'"))
+        self.assertIn("class='body-preview'", table_html)
+        self.assertIn("class='body-full' hidden", table_html)
+        self.assertIn("class='body kokuji-snippet is-expandable'", table_html)
         self.assertIn("data-notice-id='9'", table_html)
         self.assertIn("<div class='kokuji-meta'>国土交通省</div>", table_html)
         self.assertIn("<div class='kokuji-meta kokuji-year'>2000年</div>", table_html)
@@ -971,6 +980,9 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn('localStorage.setItem(THEME_STORAGE_KEY, theme);', html_doc)
         self.assertIn('prefers-color-scheme: dark', html_doc)
         self.assertIn("html[data-theme=\"dark\"]", html_doc)
+        self.assertIn("window.__suppressShutdownOnUnload = false;", html_doc)
+        self.assertIn('document.querySelectorAll(".nav-link[href=\'/\'], .actions form")', html_doc)
+        self.assertIn('navigator.sendBeacon("/shutdown", "")', html_doc)
         self.assertIn("--table-head-bg: #1a2e4a;", html_doc)
         self.assertIn("--table-head-text: #ffffff;", html_doc)
         self.assertIn("--mark-text: inherit;", html_doc)
@@ -980,6 +992,9 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn("background: var(--table-head-bg);", html_doc)
         self.assertIn("color: var(--table-head-text);", html_doc)
         self.assertIn("--mark-text: #24292f;", html_doc)
+        self.assertIn(".kokuji-link-stack .copy-button {", SEARCH_PAGE_TEMPLATE)
+        self.assertIn("position: relative;", SEARCH_PAGE_TEMPLATE)
+        self.assertIn("display: inline-flex;", SEARCH_PAGE_TEMPLATE)
         self.assertIn("<div>ok</div>", html_doc)
         self.assertIn("<table><tbody></tbody></table>", html_doc)
 
@@ -1031,13 +1046,13 @@ class DatabaseAndWebTests(unittest.TestCase):
         filtered = LawSearchHandler._filter_article_rows_by_body_keyword(rows, "防火 煙")
         self.assertEqual(
             filtered,
-            [("建築基準法", "第2条の2", "<mark>防火</mark>設備と排<mark>煙</mark>に関する規定。", "<mark>防火</mark>設備と排<mark>煙</mark>に関する規定。")],
+            [("建築基準法", "第2条の2", "<mark>防火</mark>設備と排<mark>煙</mark>に関する規定。", "<mark>防火</mark>設備と排<mark>煙</mark>に関する規定。", "")],
         )
 
-    def test_build_collapsed_body_preview_limits_to_eight_lines(self):
+    def test_build_collapsed_body_preview_limits_to_five_lines_with_ellipsis(self):
         text = "\n".join(f"{index}行目" for index in range(1, 11))
         preview = LawSearchHandler._build_collapsed_body_preview(text)
-        self.assertEqual(preview, "\n".join(f"{index}行目" for index in range(1, 9)))
+        self.assertEqual(preview, "\n".join([*(f"{index}行目" for index in range(1, 5)), "5行目…"]))
 
     def test_render_table_embeds_safe_preview_and_full_body(self):
         handler = object.__new__(LawSearchHandler)
@@ -1082,6 +1097,52 @@ class DatabaseAndWebTests(unittest.TestCase):
             "検索条件\n条番号: 第1条\n本文キーワード: 耐火\n\n建築基準法\n第1条\n耐火構造の全文\n\n消防法\n第三条\n放置物件を除去する。",
         )
         self.assertNotIn("<mark>", text)
+
+    def test_search_article_number_highlights_article_and_body_and_collapses_to_five_lines(self):
+        sample_root = ET.fromstring(
+            """
+            <Root>
+              <LawBody>
+                <MainProvision>
+                  <Article>
+                    <ArticleTitle>第6条</ArticleTitle>
+                    <Paragraph>
+                      <ParagraphNum>1</ParagraphNum>
+                      <ParagraphSentence>
+                        <Sentence>第六条
+一行目
+二行目
+三行目
+四行目
+五行目
+六行目</Sentence>
+                      </ParagraphSentence>
+                    </Paragraph>
+                  </Article>
+                </MainProvision>
+              </LawBody>
+            </Root>
+            """
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as tf:
+            conn = sqlite3.connect(tf.name)
+            init_db(conn)
+            upsert_law(conn, LawSource("X006", "建築基準法"), sample_root)
+            conn.commit()
+            conn.close()
+
+            handler = object.__new__(LawSearchHandler)
+            handler.db_path = tf.name
+            rows, warning = LawSearchHandler.search_article(handler, "6")
+            table_html = LawSearchHandler.render_table(handler, rows)
+
+        self.assertEqual(warning, "")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(len(rows[0][2].splitlines()), 5)
+        self.assertTrue(rows[0][2].endswith("…"))
+        self.assertIn("<mark>第六条</mark>", rows[0][3])
+        self.assertIn("<td class='article'><mark>6条</mark></td>", table_html)
 
     def test_render_meta_actions_builds_download_link_for_active_query(self):
         handler = object.__new__(LawSearchHandler)
@@ -1204,8 +1265,9 @@ class DatabaseAndWebTests(unittest.TestCase):
         row = ("建築基準法", "main", "第112条", "\n".join(f"{index}行目" for index in range(1, 11)))
         formatted = LawSearchHandler._format_result_row(row)
 
-        self.assertEqual(formatted[2], "\n".join(f"{index}行目" for index in range(1, 9)))
+        self.assertEqual(formatted[2], "\n".join([*(f"{index}行目" for index in range(1, 5)), "5行目…"]))
         self.assertEqual(formatted[3], "\n".join(f"{index}行目" for index in range(1, 11)))
+        self.assertEqual(formatted[4], "112条")
 
     def test_search_body_prepends_heading_to_like_snippet(self):
         heading_root = ET.fromstring(SAMPLE_HEADING_XML)
