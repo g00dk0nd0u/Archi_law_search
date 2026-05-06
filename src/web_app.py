@@ -1465,11 +1465,12 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             number_query = notice_number_query
             if not display_notice_number_query and display_article_query:
                 display_number_query = display_article_query
+        has_search_inputs = self._has_search_inputs(number_query, body_query)
         query = self._display_query(number_query, body_query)
 
         rows = []
         warning_parts: list[str] = []
-        if query:
+        if has_search_inputs:
             if source == "kokuji":
                 rows, warning = self.search_kokuji_notice(notice_number_query, body_query, source_state)
             else:
@@ -1477,10 +1478,12 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             if warning:
                 warning_parts.append(warning)
 
-        if query:
+        if has_search_inputs:
             meta = self._build_meta(rows, " / ".join(warning_parts))
         else:
-            meta = "キーワードを入力してください"
+            meta = "キーワードまたは条番号を入力してください。"
+
+        empty_message = self._empty_message_for_source(source, source_state) if has_search_inputs else "キーワードまたは条番号を入力してください。"
 
         body = SEARCH_PAGE_TEMPLATE.format(
             shutdown_action=self._render_shutdown_action(),
@@ -1502,7 +1505,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
                 notice_number_query=notice_number_query,
                 body_query=body_query,
             ),
-            table=self.render_results(rows, source=source, empty_message=self._empty_message_for_source(source, source_state)),
+            table=self.render_results(rows, source=source, empty_message=empty_message),
         ).encode("utf-8")
         self._send_html(body)
 
@@ -1704,6 +1707,10 @@ class LawSearchHandler(BaseHTTPRequestHandler):
     @staticmethod
     def _display_query(number_query: str, body_query: str) -> str:
         return number_query or body_query
+
+    @staticmethod
+    def _has_search_inputs(number_query: str, body_query: str) -> bool:
+        return bool(number_query or body_query)
 
     @staticmethod
     def _number_label_for_source(source: str) -> str:

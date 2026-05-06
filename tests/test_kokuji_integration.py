@@ -310,7 +310,7 @@ class KokujiIntegrationTests(unittest.TestCase):
             result = subprocess.run(
                 [
                     sys.executable,
-                    str(ROOT / "tools" / "import_kokuji_db.py"),
+                    str(ROOT / "internal_tools" / "import_kokuji_db.py"),
                     "--source",
                     str(source_db),
                     "--dest",
@@ -343,7 +343,7 @@ class KokujiIntegrationTests(unittest.TestCase):
             result = subprocess.run(
                 [
                     sys.executable,
-                    str(ROOT / "tools" / "import_kokuji_db.py"),
+                    str(ROOT / "internal_tools" / "import_kokuji_db.py"),
                     "--source",
                     str(source_db),
                     "--dest",

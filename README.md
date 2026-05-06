@@ -19,10 +19,11 @@ python -m src.prepare_sqlite --db data/laws.db
 次に Web アプリを起動します。
 
 ```bash
-python -m src.web_app --db data/laws.db --host 127.0.0.1 --port 8765
+python run_app.py --db data/laws.db --host 127.0.0.1 --port 8765
 ```
 
 ブラウザで `http://127.0.0.1:8765` を開いて検索します。検索フォームは左から `番号` → `検索キーワード` → `法令 / 告示スイッチ` → `検索` の順で、デフォルトは `法令` です。`Settings` から法令の追加・更新・削除もできます。
+内部実装は [src/web_app.py](src/web_app.py) に残しており、通常の起動入口は [run_app.py](run_app.py) です。
 
 - `source=law` では `article` に条番号、`q` に本文キーワードを入れます
 - `source=kokuji` では `notice_number` に告示番号、`q` にキーワードを入れます
@@ -67,11 +68,11 @@ python -m cli.search_laws --query "容積率" --export-txt
 Kokuji_DB 側で生成した DB を取り込むとき:
 
 ```bash
-python3 tools/import_kokuji_db.py --source ../Kokuji_DB/data/kokuji_notices.db
-python3 tools/import_kokuji_db.py --source ../Kokuji_DB/data/kokuji_notices.db --dest data/kokuji_notices.db
+python3 internal_tools/import_kokuji_db.py --source ../Kokuji_DB/data/kokuji_notices.db
+python3 internal_tools/import_kokuji_db.py --source ../Kokuji_DB/data/kokuji_notices.db --dest data/kokuji_notices.db
 ```
 
-`import_kokuji_db.py` は標準ライブラリのみを使い、取り込み前に最低限の SQLite スキーマ検証を行います。
+`internal_tools/import_kokuji_db.py` は標準ライブラリのみを使い、取り込み前に最低限の SQLite スキーマ検証を行います。互換性のため、既存の `tools/import_kokuji_db.py` も当面は同じ内部処理を呼ぶ薄いラッパーとして残しています。
 
 告示検索 CLI:
 

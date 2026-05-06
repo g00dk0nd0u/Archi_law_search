@@ -1202,8 +1202,8 @@ class DatabaseAndWebTests(unittest.TestCase):
         parsed = type("Parsed", (), {"query": ""})()
         LawSearchHandler._handle_search_page(handler, parsed)
 
-        self.assertIn("キーワードを入力してください", captured["html"])
-        self.assertIn("該当する条文が見つかりませんでした。検索語を変えて再度お試しください。", captured["html"])
+        self.assertIn("キーワードまたは条番号を入力してください。", captured["html"])
+        self.assertNotIn("該当する条文が見つかりませんでした。検索語を変えて再度お試しください。", captured["html"])
         self.assertIn('value="law" checked', captured["html"])
 
     def test_handle_search_page_preserves_trailing_space_in_keyword_input(self):
@@ -1223,6 +1223,26 @@ class DatabaseAndWebTests(unittest.TestCase):
         LawSearchHandler._handle_search_page(handler, parsed)
 
         self.assertIn('name="q" value="防火 "', captured["html"])
+
+    def test_handle_search_page_empty_query_in_kokuji_mode_returns_initial_empty_state(self):
+        handler = object.__new__(LawSearchHandler)
+        captured = {}
+
+        def fake_send_html(body: bytes):
+            captured["html"] = body.decode("utf-8")
+
+        handler._send_html = fake_send_html
+        handler.render_table = LawSearchHandler.render_table.__get__(handler, LawSearchHandler)
+        handler.render_results = LawSearchHandler.render_results.__get__(handler, LawSearchHandler)
+        handler.kokuji_db_path = str(ROOT / "data" / "kokuji_notices.db")
+        handler.db_path = str(ROOT / "data" / "laws.db")
+
+        parsed = type("Parsed", (), {"query": "source=kokuji"})()
+        LawSearchHandler._handle_search_page(handler, parsed)
+
+        self.assertIn("キーワードまたは条番号を入力してください。", captured["html"])
+        self.assertNotIn("該当する告示が見つかりませんでした。検索語を変えて再度お試しください。", captured["html"])
+        self.assertIn('value="kokuji" checked', captured["html"])
 
     def test_search_body_uses_whitespace_as_and_search(self):
         source = LawSource("X400", "建築基準法")

@@ -6,10 +6,11 @@
 
 ```bash
 python -m src.prepare_sqlite --db data/laws.db
-python -m src.web_app --db data/laws.db --host 127.0.0.1 --port 8765
+python run_app.py --db data/laws.db --host 127.0.0.1 --port 8765
 ```
 
 ブラウザで `http://127.0.0.1:8765` を開いて使います。
+内部実装ファイルは `src/web_app.py` ですが、通常は `run_app.py` を実行します。
 
 ## ブラウザでの使い方
 
