@@ -620,7 +620,7 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
         <span class=\"theme-toggle-icon\" aria-hidden=\"true\">☾</span>
       </button>
       {shutdown_action}
-      <a class=\"nav-link\" href=\"/settings\">Settings</a>
+      <a class=\"nav-link settings-link\" href=\"{settings_href}\">Settings</a>
     </div>
   </div>
   <form method=\"get\" action=\"/\" class=\"search-form\">
@@ -651,7 +651,7 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
     </div>
   </form>
   {search_notice}
-  <div class=\"meta\">
+  <div class=\"meta\"{meta_hidden}>
     <strong>{meta}</strong>
     <div class=\"meta-actions\">{meta_actions}</div>
   </div>
@@ -901,7 +901,7 @@ SEARCH_PAGE_TEMPLATE = """<!doctype html>
         clearScheduledSubmit();
       }});
 
-      document.querySelectorAll(".text-download-button, .nav-link[href='/settings']").forEach(function (element) {{
+      document.querySelectorAll(".text-download-button, .settings-link").forEach(function (element) {{
         element.addEventListener("click", function () {{
           window.__suppressShutdownOnUnload = true;
           persistActiveFocusState();
@@ -1324,7 +1324,7 @@ SETTINGS_PAGE_TEMPLATE = """<!doctype html>
       <button type=\"button\" class=\"theme-toggle\" data-theme-toggle aria-label=\"テーマ切替\" title=\"ダークモードに切替\">
         <span class=\"theme-toggle-icon\" aria-hidden=\"true\">☾</span>
       </button>
-      <a class=\"nav-link\" href=\"/\">検索へ戻る</a>
+      <a class=\"nav-link back-link\" href=\"{back_href}\">検索へ戻る</a>
     </div>
   </div>
   <div class=\"panel\">
@@ -1379,7 +1379,7 @@ SETTINGS_PAGE_TEMPLATE = """<!doctype html>
         return ["127.0.0.1", "localhost", "::1"].indexOf(window.location.hostname) >= 0;
       }};
 
-      document.querySelectorAll(".nav-link[href='/'], .actions form").forEach(function (element) {{
+      document.querySelectorAll(".back-link, .actions form").forEach(function (element) {{
         element.addEventListener("click", function () {{
           window.__suppressShutdownOnUnload = true;
         }});
@@ -1480,13 +1480,16 @@ class LawSearchHandler(BaseHTTPRequestHandler):
 
         if has_search_inputs:
             meta = self._build_meta(rows, " / ".join(warning_parts))
+            meta_hidden = ""
         else:
-            meta = "キーワードまたは条番号を入力してください。"
+            meta = ""
+            meta_hidden = " hidden"
 
         empty_message = self._empty_message_for_source(source, source_state) if has_search_inputs else "キーワードまたは条番号を入力してください。"
 
         body = SEARCH_PAGE_TEMPLATE.format(
             shutdown_action=self._render_shutdown_action(),
+            settings_href=html.escape(self._build_settings_href(parsed.query), quote=True),
             number_query=html.escape(display_number_query),
             body_query=html.escape(display_body_query),
             number_label=html.escape(self._number_label_for_source(source)),
@@ -1499,6 +1502,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             source_note=html.escape(source_state["note"]),
             search_notice=self._render_search_notice(message, message_kind),
             meta=html.escape(meta),
+            meta_hidden=meta_hidden,
             meta_actions=self._render_meta_actions(
                 source=source,
                 article_query=article_query,
@@ -1560,9 +1564,10 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _handle_settings_page(self, parsed):
-        params = parse_qs(parsed.query)
+        params = parse_qs(parsed.query, keep_blank_values=True)
         message = params.get("message", [""])[0].strip()
         kind = params.get("kind", ["info"])[0].strip()
+        return_to = params.get("return_to", [""])[0]
         notice = self._render_notice(message, kind) if message else ""
 
         installed_ids = set()
@@ -1572,8 +1577,9 @@ class LawSearchHandler(BaseHTTPRequestHandler):
                 installed_ids = list_installed_law_ids(conn)
 
         body = SETTINGS_PAGE_TEMPLATE.format(
+            back_href=html.escape(self._build_search_return_href(return_to), quote=True),
             notice=notice,
-            rows=self.render_settings_table(installed_ids),
+            rows=self.render_settings_table(installed_ids, return_to=return_to),
         ).encode("utf-8")
         self._send_html(body)
 
@@ -1581,9 +1587,10 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         params = self._read_post_params()
         action = params.get("action", [""])[0].strip()
         law_id = params.get("law_id", [""])[0].strip()
+        return_to = params.get("return_to", [""])[0]
         law = LAW_BY_ID.get(law_id)
         if law is None:
-            self._redirect_with_message("error", "対象の法令が見つかりません。")
+            self._redirect_with_message("error", "対象の法令が見つかりません。", return_to=return_to)
             return
 
         try:
@@ -1608,15 +1615,15 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             finally:
                 conn.close()
         except Exception as exc:
-            self._redirect_with_message("error", f"{law.law_name}: {exc}")
+            self._redirect_with_message("error", f"{law.law_name}: {exc}", return_to=return_to)
             return
 
         if action == "add":
-            self._redirect_with_message("info", f"{law.law_name} を追加しました。{count}件の条文を取込済です。")
+            self._redirect_with_message("info", f"{law.law_name} を追加しました。{count}件の条文を取込済です。", return_to=return_to)
         elif action == "refresh":
-            self._redirect_with_message("info", f"{law.law_name} を更新しました。{count}件の条文を再取込しました。")
+            self._redirect_with_message("info", f"{law.law_name} を更新しました。{count}件の条文を再取込しました。", return_to=return_to)
         else:
-            self._redirect_with_message("info", f"{law.law_name} を削除しました。")
+            self._redirect_with_message("info", f"{law.law_name} を削除しました。", return_to=return_to)
 
     def _send_html(self, body: bytes):
         self.send_response(HTTPStatus.OK)
@@ -1633,8 +1640,11 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _redirect_with_message(self, kind: str, message: str):
-        query = urlencode({"kind": kind, "message": message})
+    def _redirect_with_message(self, kind: str, message: str, return_to: str = ""):
+        payload = {"kind": kind, "message": message}
+        if return_to:
+            payload["return_to"] = return_to
+        query = urlencode(payload)
         self.send_response(HTTPStatus.SEE_OTHER)
         self.send_header("Location", f"/settings?{query}")
         self.end_headers()
@@ -2600,7 +2610,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         if server is not None:
             threading.Thread(target=server.shutdown, daemon=True).start()
 
-    def render_settings_table(self, installed_ids: Set[str]) -> str:
+    def render_settings_table(self, installed_ids: Set[str], return_to: str = "") -> str:
         if not LAW_REGISTRY:
             return "<div class='empty'>表示できる法令がありません。</div>"
 
@@ -2613,7 +2623,7 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             is_installed = law.law_id in installed_ids
             status_label = "取込済" if is_installed else "未取込"
             status_class = "status-badge" if is_installed else "status-badge is-off"
-            actions = self._render_settings_actions(law.law_id, is_installed)
+            actions = self._render_settings_actions(law.law_id, is_installed, return_to=return_to)
             lines.append(
                 "<tr>"
                 f"<td><div class='law-name'>{html.escape(law.law_name)}</div></td>"
@@ -2625,13 +2635,19 @@ class LawSearchHandler(BaseHTTPRequestHandler):
         return "\n".join(lines)
 
     @staticmethod
-    def _render_settings_actions(law_id: str, is_installed: bool) -> str:
+    def _render_settings_actions(law_id: str, is_installed: bool, return_to: str = "") -> str:
         def render_form(action: str, label: str, button_class: str = "") -> str:
             class_attr = f" class='{button_class}'" if button_class else ""
+            return_to_input = (
+                f"<input type='hidden' name='return_to' value='{html.escape(return_to, quote=True)}' />"
+                if return_to
+                else ""
+            )
             return (
                 "<form method='post' action='/settings/action'>"
                 f"<input type='hidden' name='law_id' value='{html.escape(law_id)}' />"
                 f"<input type='hidden' name='action' value='{action}' />"
+                f"{return_to_input}"
                 f"<button type='submit'{class_attr}>{label}</button>"
                 "</form>"
             )
@@ -2641,6 +2657,16 @@ class LawSearchHandler(BaseHTTPRequestHandler):
             render_form("delete", "削除", "button-danger"),
         ]
         return f"<div class='actions'>{''.join(forms)}</div>"
+
+    @staticmethod
+    def _build_settings_href(query_string: str) -> str:
+        if not query_string:
+            return "/settings"
+        return "/settings?" + urlencode({"return_to": query_string})
+
+    @staticmethod
+    def _build_search_return_href(return_to: str) -> str:
+        return f"/?{return_to}" if return_to else "/"
 
 
 def parse_args():

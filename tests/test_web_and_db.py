@@ -804,6 +804,7 @@ class DatabaseAndWebTests(unittest.TestCase):
     def test_page_template_supports_realtime_search_script(self):
         html_doc = SEARCH_PAGE_TEMPLATE.format(
             shutdown_action="",
+            settings_href="/settings?return_to=article%3D112",
             number_query="112",
             body_query="耐火",
             number_label="条番号",
@@ -816,6 +817,7 @@ class DatabaseAndWebTests(unittest.TestCase):
             source_note="",
             search_notice="",
             meta="1件ヒット",
+            meta_hidden="",
             meta_actions="<a class='text-download-button'>TXT保存</a>",
             table="<div>ok</div>",
         )
@@ -831,7 +833,7 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn("sessionStorage.getItem(focusStorageKey)", html_doc)
         self.assertIn("window.__suppressShutdownOnUnload = false;", html_doc)
         self.assertIn('navigator.sendBeacon("/shutdown", "")', html_doc)
-        self.assertIn('document.querySelectorAll(".text-download-button, .nav-link[href=\'/settings\']")', html_doc)
+        self.assertIn('document.querySelectorAll(".text-download-button, .settings-link")', html_doc)
         self.assertIn("const numberValue = numberInput.value.trim();", html_doc)
         self.assertIn("if (!numberValue && !queryValue) {", html_doc)
         self.assertIn("return true;", html_doc)
@@ -972,7 +974,7 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertTrue(fake_server.called)
 
     def test_settings_template_supports_notice_and_table_markup(self):
-        html_doc = SETTINGS_PAGE_TEMPLATE.format(notice="<div>ok</div>", rows="<table><tbody></tbody></table>")
+        html_doc = SETTINGS_PAGE_TEMPLATE.format(back_href="/?article=35-3&source=law", notice="<div>ok</div>", rows="<table><tbody></tbody></table>")
         self.assertIn("法令 Settings", html_doc)
         self.assertIn("検索へ戻る", html_doc)
         self.assertIn('class="theme-toggle"', html_doc)
@@ -981,7 +983,7 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn('prefers-color-scheme: dark', html_doc)
         self.assertIn("html[data-theme=\"dark\"]", html_doc)
         self.assertIn("window.__suppressShutdownOnUnload = false;", html_doc)
-        self.assertIn('document.querySelectorAll(".nav-link[href=\'/\'], .actions form")', html_doc)
+        self.assertIn('document.querySelectorAll(".back-link, .actions form")', html_doc)
         self.assertIn('navigator.sendBeacon("/shutdown", "")', html_doc)
         self.assertIn("--table-head-bg: #1a2e4a;", html_doc)
         self.assertIn("--table-head-text: #ffffff;", html_doc)
@@ -1170,6 +1172,24 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertIn("q=%E6%8E%92%E7%85%99", html_kokuji)
         self.assertEqual(html_without_query, "")
 
+    def test_build_settings_href_preserves_current_search_query(self):
+        href = LawSearchHandler._build_settings_href("article=35-3&q=%E9%98%B2%E7%81%AB&source=law")
+        self.assertEqual(
+            href,
+            "/settings?return_to=article%3D35-3%26q%3D%25E9%2598%25B2%25E7%2581%25AB%26source%3Dlaw",
+        )
+        self.assertEqual(LawSearchHandler._build_settings_href(""), "/settings")
+
+    def test_build_search_return_href_restores_original_query(self):
+        href = LawSearchHandler._build_search_return_href("article=35-3&q=%E9%98%B2%E7%81%AB&source=law")
+        self.assertEqual(href, "/?article=35-3&q=%E9%98%B2%E7%81%AB&source=law")
+        self.assertEqual(LawSearchHandler._build_search_return_href(""), "/")
+
+    def test_render_settings_actions_embeds_return_to_hidden_input(self):
+        html_doc = LawSearchHandler._render_settings_actions("325AC0000000201", False, return_to="article=35-3&source=law")
+        self.assertIn("name='return_to'", html_doc)
+        self.assertIn("value='article=35-3&amp;source=law'", html_doc)
+
     def test_format_notice_number_display_breaks_before_number(self):
         self.assertEqual(
             LawSearchHandler._format_notice_number_display("国土交通省告示第1119号"),
@@ -1204,6 +1224,7 @@ class DatabaseAndWebTests(unittest.TestCase):
 
         self.assertIn("キーワードまたは条番号を入力してください。", captured["html"])
         self.assertNotIn("該当する条文が見つかりませんでした。検索語を変えて再度お試しください。", captured["html"])
+        self.assertEqual(captured["html"].count("キーワードまたは条番号を入力してください。"), 1)
         self.assertIn('value="law" checked', captured["html"])
 
     def test_handle_search_page_preserves_trailing_space_in_keyword_input(self):
@@ -1224,6 +1245,27 @@ class DatabaseAndWebTests(unittest.TestCase):
 
         self.assertIn('name="q" value="防火 "', captured["html"])
 
+    def test_handle_search_page_builds_settings_link_with_current_query(self):
+        handler = object.__new__(LawSearchHandler)
+        captured = {}
+
+        def fake_send_html(body: bytes):
+            captured["html"] = body.decode("utf-8")
+
+        handler._send_html = fake_send_html
+        handler.render_table = LawSearchHandler.render_table.__get__(handler, LawSearchHandler)
+        handler.render_results = LawSearchHandler.render_results.__get__(handler, LawSearchHandler)
+        handler.kokuji_db_path = str(ROOT / "data" / "kokuji_notices.db")
+        handler.db_path = str(ROOT / "data" / "laws.db")
+
+        parsed = type("Parsed", (), {"query": "article=35-3&q=%E9%98%B2%E7%81%AB&source=law"})()
+        LawSearchHandler._handle_search_page(handler, parsed)
+
+        self.assertIn(
+            'href="/settings?return_to=article%3D35-3%26q%3D%25E9%2598%25B2%25E7%2581%25AB%26source%3Dlaw"',
+            captured["html"],
+        )
+
     def test_handle_search_page_empty_query_in_kokuji_mode_returns_initial_empty_state(self):
         handler = object.__new__(LawSearchHandler)
         captured = {}
@@ -1242,6 +1284,7 @@ class DatabaseAndWebTests(unittest.TestCase):
 
         self.assertIn("キーワードまたは条番号を入力してください。", captured["html"])
         self.assertNotIn("該当する告示が見つかりませんでした。検索語を変えて再度お試しください。", captured["html"])
+        self.assertEqual(captured["html"].count("キーワードまたは条番号を入力してください。"), 1)
         self.assertIn('value="kokuji" checked', captured["html"])
 
     def test_search_body_uses_whitespace_as_and_search(self):
