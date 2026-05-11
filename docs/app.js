@@ -50,6 +50,24 @@ function renderInitialPrompt() {
   els.results.innerHTML = '<div class="empty">条番号またはキーワードを入力して検索してください。</div>';
 }
 
+function populateLawTitleFilter(lawTitles) {
+  const current = els.lawTitleFilter.value;
+  els.lawTitleFilter.innerHTML = '<option value="">全法令</option>';
+  for (const item of lawTitles || []) {
+    const title = item.title || "";
+    if (!title) {
+      continue;
+    }
+    const option = document.createElement("option");
+    option.value = title;
+    option.textContent = title;
+    els.lawTitleFilter.appendChild(option);
+  }
+  if (current && Array.from(els.lawTitleFilter.options).some((option) => option.value === current)) {
+    els.lawTitleFilter.value = current;
+  }
+}
+
 function updateThemeButton(theme) {
   const icon = els.themeToggle ? els.themeToggle.querySelector(".theme-toggle-icon") : null;
   if (!icon) {
@@ -241,7 +259,7 @@ function loadBody(item) {
 
 function initWorker() {
   try {
-    state.worker = new Worker("search-worker.js?v=20260511");
+    state.worker = new Worker("search-worker.js?v=20260511b");
   } catch (error) {
     setStatus("Workerを起動できません");
     els.results.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
@@ -252,6 +270,7 @@ function initWorker() {
     const message = event.data || {};
     if (message.type === "ready") {
       state.ready = true;
+      populateLawTitleFilter(message.lawTitles || []);
       setStatus(`読み込み完了 法令${message.counts.law}件 / 告示${message.counts.kokuji}件`);
       renderInitialPrompt();
       return;
