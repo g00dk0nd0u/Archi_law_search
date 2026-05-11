@@ -259,7 +259,7 @@ function loadBody(item) {
 
 function initWorker() {
   try {
-    state.worker = new Worker("search-worker.js?v=20260511b");
+    state.worker = new Worker("search-worker.js?v=3856927");
   } catch (error) {
     setStatus("Workerを起動できません");
     els.results.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
