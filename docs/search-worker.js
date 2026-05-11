@@ -57,16 +57,12 @@ function articleVariants(value) {
   }
   const match = raw
     .replace(/[－ー―]/g, "-")
-    .match(/^(?:第)?(\d+)(?:条)?(?:[-の](\d+))?/);
+    .match(/^(?:第)?(\d+)(?:条)?(?:[-の](\d+))?(?:条)?$/);
   if (match) {
     const main = match[1];
     const branch = match[2] || "";
     const mainKanji = intToKanji(main);
     const branchKanji = branch ? intToKanji(branch) : "";
-    variants.add(`第${main}条`);
-    if (mainKanji) {
-      variants.add(`第${mainKanji}条`);
-    }
     if (branch) {
       variants.add(`第${main}条の${branch}`);
       if (mainKanji) {
@@ -74,6 +70,11 @@ function articleVariants(value) {
       }
       if (mainKanji && branchKanji) {
         variants.add(`第${mainKanji}条の${branchKanji}`);
+      }
+    } else {
+      variants.add(`第${main}条`);
+      if (mainKanji) {
+        variants.add(`第${mainKanji}条`);
       }
     }
   }
@@ -162,7 +163,7 @@ function cachedBody(record) {
   return bodies ? bodies[record.id] || "" : "";
 }
 
-async function search(source, numberQuery, keywordQuery, limit) {
+async function search(source, numberQuery, keywordQuery, lawTitleFilter, limit) {
   const terms = tokenize(keywordQuery);
   if (terms.length) {
     await ensureBodiesFor(source);
@@ -171,6 +172,9 @@ async function search(source, numberQuery, keywordQuery, limit) {
   const normalizedTerms = terms.map(normalizeSearchText);
   const results = [];
   for (const record of indexes[source]) {
+    if (source === "law" && lawTitleFilter && record.law_title !== lawTitleFilter) {
+      continue;
+    }
     if (!numberMatches(record, source, numberQuery)) {
       continue;
     }
@@ -204,6 +208,7 @@ self.addEventListener("message", async (event) => {
         message.source || "law",
         message.numberQuery || "",
         message.keywordQuery || "",
+        message.lawTitleFilter || "",
         Number(message.limit || 100)
       );
       self.postMessage({ type: "results", ...payload });

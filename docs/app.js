@@ -4,6 +4,7 @@ const state = {
   selectedId: "",
   worker: null,
   lastTerms: [],
+  recordsById: new Map(),
 };
 
 const els = {
@@ -11,14 +12,13 @@ const els = {
   numberLabel: document.getElementById("number-label"),
   numberQuery: document.getElementById("number-query"),
   keywordQuery: document.getElementById("keyword-query"),
+  lawFilterField: document.getElementById("law-filter-field"),
+  lawTitleFilter: document.getElementById("law-title-filter"),
   searchButton: document.getElementById("search-button"),
-  clearButton: document.getElementById("clear-button"),
   resultCount: document.getElementById("result-count"),
   results: document.getElementById("results"),
-  bodyTitle: document.getElementById("body-title"),
-  bodyText: document.getElementById("body-text"),
-  sourceLink: document.getElementById("source-link"),
-  tabs: Array.from(document.querySelectorAll(".source-tab")),
+  tabs: Array.from(document.querySelectorAll(".source-option")),
+  themeToggle: document.getElementById("theme-toggle"),
 };
 
 function escapeHtml(value) {
@@ -44,79 +44,167 @@ function setStatus(text) {
   els.status.textContent = text;
 }
 
+function updateThemeButton(theme) {
+  const icon = els.themeToggle ? els.themeToggle.querySelector(".theme-toggle-icon") : null;
+  if (!icon) {
+    return;
+  }
+  if (theme === "dark") {
+    icon.textContent = "☀";
+    els.themeToggle.title = "ライトモードに切替";
+    els.themeToggle.setAttribute("aria-label", "ライトモードに切替");
+  } else {
+    icon.textContent = "☾";
+    els.themeToggle.title = "ダークモードに切替";
+    els.themeToggle.setAttribute("aria-label", "ダークモードに切替");
+  }
+}
+
+function applyTheme(theme, persist) {
+  document.documentElement.dataset.theme = theme;
+  updateThemeButton(theme);
+  if (persist) {
+    localStorage.setItem("archi-law-search-theme", theme);
+  }
+}
+
+function initTheme() {
+  const savedTheme = localStorage.getItem("archi-law-search-theme");
+  const preferred = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  applyTheme(savedTheme === "light" || savedTheme === "dark" ? savedTheme : preferred, false);
+  if (els.themeToggle) {
+    els.themeToggle.addEventListener("click", () => {
+      applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark", true);
+    });
+  }
+}
+
 function setSource(source) {
   state.source = source;
-  els.numberLabel.textContent = source === "law" ? "条番号" : "告示番号";
-  els.numberQuery.placeholder = source === "law" ? "例: 第五十二条" : "例: 1436号";
+  const isLaw = source === "law";
+  els.numberLabel.textContent = isLaw ? "条番号" : "告示番号";
+  els.numberQuery.placeholder = isLaw ? "例: 112" : "例: 1436号";
+  els.keywordQuery.placeholder = isLaw ? "例: 防火、容積率、準耐火" : "例: 排煙、防火設備、準不燃";
+  els.lawFilterField.hidden = !isLaw;
+  els.lawTitleFilter.disabled = !isLaw;
   els.tabs.forEach((tab) => tab.classList.toggle("active", tab.dataset.source === source));
-  clearBody();
+  clearExpandedRows();
   runSearch();
 }
 
-function clearBody() {
+function clearExpandedRows() {
   state.selectedId = "";
-  els.bodyTitle.textContent = "検索結果を選択してください。";
-  els.bodyText.textContent = "";
-  els.sourceLink.hidden = true;
-  els.sourceLink.removeAttribute("href");
+  Array.from(document.querySelectorAll(".result-row.expanded")).forEach((row) => {
+    row.classList.remove("expanded");
+    const record = state.recordsById.get(row.dataset.id);
+    const bodyCell = row.querySelector(".body-cell");
+    if (record && bodyCell) {
+      bodyCell.innerHTML = bodyCellHtml(record, state.lastTerms, false);
+    }
+  });
+}
+
+function tableHeadHtml(source) {
+  if (source === "law") {
+    return "<thead><tr><th>法令</th><th>条</th><th>本文</th></tr></thead>";
+  }
+  return "<thead><tr><th>告示番号</th><th>告示名</th><th>本文</th><th>リンク</th></tr></thead>";
 }
 
 function renderResults(results, terms) {
-  els.resultCount.textContent = `${results.length}件`;
+  state.recordsById = new Map(results.map((item) => [item.id, item]));
+  els.resultCount.textContent = `${results.length}件ヒット`;
   els.results.innerHTML = "";
 
   if (!results.length) {
-    els.results.innerHTML = '<div class="empty">検索結果はありません。</div>';
+    els.results.innerHTML = '<div class="empty">該当する結果が見つかりませんでした。検索語を変えて再度お試しください。</div>';
     return;
   }
 
-  const fragment = document.createDocumentFragment();
+  const table = document.createElement("table");
+  table.className = state.source === "law" ? "result-table law-table" : "result-table kokuji-table";
+  table.innerHTML = `${tableHeadHtml(state.source)}<tbody></tbody>`;
+  const tbody = table.querySelector("tbody");
   for (const item of results) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = `result-item${item.id === state.selectedId ? " selected" : ""}`;
-    button.dataset.id = item.id;
-    button.innerHTML = resultHtml(item, terms);
-    button.addEventListener("click", () => loadBody(item));
-    fragment.appendChild(button);
+    tbody.appendChild(buildRow(item, terms));
   }
-  els.results.appendChild(fragment);
+  els.results.appendChild(table);
 }
 
-function resultHtml(item, terms) {
-  if (item.source === "law") {
-    const title = `${item.law_title} ${item.article_number}${item.article_title || ""}`;
-    return `
-      <span class="result-title">${highlight(title, terms)}</span>
-      <span class="result-meta">${escapeHtml(item.provision_kind || "")} ${escapeHtml(item.provision_context || "")}</span>
-      <span class="result-preview">${highlight(item.preview || "", terms)}</span>
-    `;
-  }
+function buildRow(item, terms) {
+  const row = document.createElement("tr");
+  row.className = "result-row";
+  row.dataset.id = item.id;
+  row.innerHTML = item.source === "law" ? lawRowHtml(item, terms) : kokujiRowHtml(item, terms);
+  row.addEventListener("click", (event) => {
+    if (event.target.closest("a")) {
+      return;
+    }
+    if (row.classList.contains("expanded")) {
+      row.classList.remove("expanded");
+      const bodyCell = row.querySelector(".body-cell");
+      if (bodyCell) {
+        bodyCell.innerHTML = bodyCellHtml(item, state.lastTerms, false);
+      }
+      state.selectedId = "";
+      return;
+    }
+    loadBody(item);
+  });
+  return row;
+}
 
-  const number = item.document_number_norm || item.document_number || "";
-  const title = `${number} ${item.notice_name || ""}`.trim();
-  const meta = [item.document_date, item.organization, item.link_label].filter(Boolean).join(" / ");
+function lawRowHtml(item, terms) {
+  const article = `${item.article_number}${item.article_title || ""}`;
   return `
-    <span class="result-title">${highlight(title, terms)}</span>
-    <span class="result-meta">${escapeHtml(meta)}</span>
-    <span class="result-preview">${highlight(item.preview || "", terms)}</span>
+    <td class="law">${highlight(item.law_title || "", terms)}</td>
+    <td class="article">${highlight(article, terms)}</td>
+    <td class="body body-cell">${bodyCellHtml(item, terms, false)}</td>
   `;
+}
+
+function kokujiRowHtml(item, terms) {
+  const number = item.document_number_norm || item.document_number || "";
+  const link = item.url
+    ? `<a class="kokuji-link-button" href="${escapeHtml(item.url)}" target="_blank" rel="noreferrer">${escapeHtml(item.link_label || "LINK")}</a>`
+    : "";
+  const meta = [item.document_date, item.organization].filter(Boolean).join(" / ");
+  return `
+    <td class="article kokuji-number">${highlight(number, terms)}</td>
+    <td class="kokuji-name">${highlight(item.notice_name || "", terms)}${meta ? `<div class="kokuji-meta">${escapeHtml(meta)}</div>` : ""}</td>
+    <td class="body body-cell">${bodyCellHtml(item, terms, false)}</td>
+    <td class="kokuji-link-cell">${link}</td>
+  `;
+}
+
+function bodyCellHtml(item, terms, expanded, body = "") {
+  const text = expanded ? body : item.preview || "";
+  const className = expanded ? "body-full" : "body-preview";
+  return `<div class="body-wrap"><div class="${className}">${highlight(text, terms)}</div></div>`;
 }
 
 function renderBody(item, body) {
   state.selectedId = item.id;
-  els.bodyTitle.innerHTML = resultHtml(item, state.lastTerms);
-  els.bodyText.innerHTML = highlight(body, state.lastTerms);
-  if (item.url) {
-    els.sourceLink.href = item.url;
-    els.sourceLink.hidden = false;
-  } else {
-    els.sourceLink.hidden = true;
-    els.sourceLink.removeAttribute("href");
-  }
-  Array.from(document.querySelectorAll(".result-item")).forEach((button) => {
-    button.classList.toggle("selected", button.dataset.id === item.id);
+  Array.from(document.querySelectorAll(".result-row.expanded")).forEach((row) => {
+    if (row.dataset.id !== item.id) {
+      row.classList.remove("expanded");
+      const record = state.recordsById.get(row.dataset.id);
+      const bodyCell = row.querySelector(".body-cell");
+      if (record && bodyCell) {
+        bodyCell.innerHTML = bodyCellHtml(record, state.lastTerms, false);
+      }
+    }
   });
+
+  const row = document.querySelector(`.result-row[data-id="${CSS.escape(item.id)}"]`);
+  if (!row) {
+    return;
+  }
+  row.classList.add("expanded");
+  const bodyCell = row.querySelector(".body-cell");
+  if (bodyCell) {
+    bodyCell.innerHTML = bodyCellHtml(item, state.lastTerms, true, body);
+  }
 }
 
 function runSearch() {
@@ -124,12 +212,13 @@ function runSearch() {
     return;
   }
   setStatus("検索中");
-  clearBody();
+  clearExpandedRows();
   state.worker.postMessage({
     type: "search",
     source: state.source,
     numberQuery: els.numberQuery.value,
     keywordQuery: els.keywordQuery.value,
+    lawTitleFilter: state.source === "law" ? els.lawTitleFilter.value : "",
     limit: 100,
   });
 }
@@ -141,7 +230,7 @@ function loadBody(item) {
 
 function initWorker() {
   try {
-    state.worker = new Worker("search-worker.js");
+    state.worker = new Worker("search-worker.js?v=20260511");
   } catch (error) {
     setStatus("Workerを起動できません");
     els.results.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
@@ -180,12 +269,7 @@ els.tabs.forEach((tab) => {
   tab.addEventListener("click", () => setSource(tab.dataset.source));
 });
 els.searchButton.addEventListener("click", runSearch);
-els.clearButton.addEventListener("click", () => {
-  els.numberQuery.value = "";
-  els.keywordQuery.value = "";
-  clearBody();
-  runSearch();
-});
+els.lawTitleFilter.addEventListener("change", runSearch);
 [els.numberQuery, els.keywordQuery].forEach((input) => {
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
@@ -194,4 +278,5 @@ els.clearButton.addEventListener("click", () => {
   });
 });
 
+initTheme();
 initWorker();

@@ -3,57 +3,66 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Archi Law Search</title>
+  <title>建築法規検索</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="site-header">
-    <div>
-      <h1>Archi Law Search</h1>
-      <p>法令DBと告示DBを分けて検索する公開用の静的検索ページです。</p>
+  <div class="page-header">
+    <h1>建築法規検索</h1>
+    <div class="header-actions">
+      <button type="button" class="theme-toggle" id="theme-toggle" aria-label="テーマ切替" title="ダークモードに切替">
+        <span class="theme-toggle-icon" aria-hidden="true">☾</span>
+      </button>
+      <button type="button" class="nav-link shutdown-link" disabled>終了</button>
+      <button type="button" class="nav-link settings-link" disabled>Settings</button>
     </div>
-    <div class="status" id="status">読み込み中</div>
-  </header>
+  </div>
 
-  <main class="layout">
-    <section class="search-panel" aria-label="検索条件">
-      <div class="source-tabs" role="tablist" aria-label="検索対象">
-        <button class="source-tab active" type="button" data-source="law">法令</button>
-        <button class="source-tab" type="button" data-source="kokuji">告示</button>
-      </div>
+  <main>
+    <section class="search-form" aria-label="検索条件">
+      <div class="search-row">
+        <label class="field is-number-query">
+          <span id="number-label">条番号</span>
+          <input id="number-query" type="search" autocomplete="off" placeholder="例: 112">
+        </label>
 
-      <label class="field">
-        <span id="number-label">条番号</span>
-        <input id="number-query" type="search" autocomplete="off" placeholder="例: 第五十二条">
-      </label>
+        <label class="field is-main-query">
+          <span>検索キーワード</span>
+          <input id="keyword-query" type="search" autocomplete="off" placeholder="例: 防火、容積率、準耐火">
+        </label>
 
-      <label class="field">
-        <span>キーワード</span>
-        <input id="keyword-query" type="search" autocomplete="off" placeholder="スペース区切りでAND検索">
-      </label>
+        <label class="field is-law-filter" id="law-filter-field">
+          <span>法令名</span>
+          <select id="law-title-filter">
+            <option value="">全法令</option>
+            <option value="建築基準法">建築基準法</option>
+            <option value="建築基準法施行令">建築基準法施行令</option>
+          </select>
+        </label>
 
-      <div class="actions">
-        <button id="search-button" type="button">検索</button>
-        <button id="clear-button" type="button" class="secondary">クリア</button>
+        <div class="source-switch-wrap">
+          <div class="source-switch-label">検索対象</div>
+          <div class="source-switch" role="tablist" aria-label="検索対象">
+            <button class="source-option active" type="button" data-source="law">法令</button>
+            <button class="source-option" type="button" data-source="kokuji">告示</button>
+          </div>
+        </div>
+
+        <button id="search-button" type="button" class="search-submit">検索</button>
       </div>
     </section>
 
-    <section class="results-panel" aria-label="検索結果">
-      <div class="results-header">
-        <h2>検索結果</h2>
-        <span id="result-count">0件</span>
+    <div class="meta" aria-live="polite">
+      <strong id="result-count">0件ヒット</strong>
+      <div class="meta-actions">
+        <span id="status">読み込み中</span>
+        <button type="button" class="text-download-button" disabled>TXT保存</button>
       </div>
-      <div id="results" class="results"></div>
-    </section>
+    </div>
 
-    <section class="body-panel" aria-label="本文">
-      <div class="body-header">
-        <h2>本文</h2>
-        <a id="source-link" href="#" target="_blank" rel="noopener" hidden>原典リンク</a>
-      </div>
-      <div id="body-title" class="body-title">検索結果を選択してください。</div>
-      <pre id="body-text" class="body-text"></pre>
+    <section id="results" class="results-area" aria-label="検索結果">
+      <div class="empty">読み込み中です。</div>
     </section>
   </main>
 
