@@ -1,6 +1,7 @@
 const state = {
   source: "law",
   ready: false,
+  hasSearched: false,
   selectedId: "",
   worker: null,
   lastTerms: [],
@@ -42,6 +43,11 @@ function highlight(value, terms) {
 
 function setStatus(text) {
   els.status.textContent = text;
+}
+
+function renderInitialPrompt() {
+  els.resultCount.textContent = "0件ヒット";
+  els.results.innerHTML = '<div class="empty">条番号またはキーワードを入力して検索してください。</div>';
 }
 
 function updateThemeButton(theme) {
@@ -89,7 +95,11 @@ function setSource(source) {
   els.lawTitleFilter.disabled = !isLaw;
   els.tabs.forEach((tab) => tab.classList.toggle("active", tab.dataset.source === source));
   clearExpandedRows();
-  runSearch();
+  if (state.hasSearched) {
+    runSearch();
+  } else {
+    renderInitialPrompt();
+  }
 }
 
 function clearExpandedRows() {
@@ -211,6 +221,7 @@ function runSearch() {
   if (!state.ready) {
     return;
   }
+  state.hasSearched = true;
   setStatus("検索中");
   clearExpandedRows();
   state.worker.postMessage({
@@ -242,7 +253,7 @@ function initWorker() {
     if (message.type === "ready") {
       state.ready = true;
       setStatus(`読み込み完了 法令${message.counts.law}件 / 告示${message.counts.kokuji}件`);
-      runSearch();
+      renderInitialPrompt();
       return;
     }
     if (message.type === "results") {
@@ -269,7 +280,11 @@ els.tabs.forEach((tab) => {
   tab.addEventListener("click", () => setSource(tab.dataset.source));
 });
 els.searchButton.addEventListener("click", runSearch);
-els.lawTitleFilter.addEventListener("change", runSearch);
+els.lawTitleFilter.addEventListener("change", () => {
+  if (state.hasSearched) {
+    runSearch();
+  }
+});
 [els.numberQuery, els.keywordQuery].forEach((input) => {
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
