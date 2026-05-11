@@ -6,6 +6,7 @@ const state = {
   worker: null,
   lastTerms: [],
   recordsById: new Map(),
+  currentResults: [],
 };
 
 const els = {
@@ -16,6 +17,7 @@ const els = {
   lawFilterField: document.getElementById("law-filter-field"),
   lawTitleFilter: document.getElementById("law-title-filter"),
   searchButton: document.getElementById("search-button"),
+  textDownloadButton: document.getElementById("text-download-button"),
   resultCount: document.getElementById("result-count"),
   results: document.getElementById("results"),
   tabs: Array.from(document.querySelectorAll(".source-option")),
@@ -49,9 +51,17 @@ function setStatus(text) {
   els.status.textContent = text;
 }
 
+function setDownloadEnabled(enabled) {
+  if (els.textDownloadButton) {
+    els.textDownloadButton.disabled = !enabled;
+  }
+}
+
 function renderInitialPrompt() {
+  state.currentResults = [];
   els.resultCount.textContent = "0件ヒット";
   els.results.innerHTML = '<div class="empty">条番号またはキーワードを入力して検索してください。</div>';
+  setDownloadEnabled(false);
 }
 
 function populateLawTitleFilter(lawTitles) {
@@ -144,11 +154,13 @@ function tableHeadHtml(source) {
 }
 
 function renderResults(results, terms) {
-  state.recordsById = new Map(results.map((item) => [item.id, item]));
-  els.resultCount.textContent = `${results.length}件ヒット`;
+  state.currentResults = results || [];
+  state.recordsById = new Map(state.currentResults.map((item) => [item.id, item]));
+  els.resultCount.textContent = `${state.currentResults.length}件ヒット`;
   els.results.innerHTML = "";
+  setDownloadEnabled(state.currentResults.length > 0);
 
-  if (!results.length) {
+  if (!state.currentResults.length) {
     els.results.innerHTML = '<div class="empty">該当する結果が見つかりませんでした。検索語を変えて再度お試しください。</div>';
     return;
   }
@@ -157,7 +169,7 @@ function renderResults(results, terms) {
   table.className = state.source === "law" ? "result-table law-table" : "result-table kokuji-table";
   table.innerHTML = `${tableHeadHtml(state.source)}<tbody></tbody>`;
   const tbody = table.querySelector("tbody");
-  for (const item of results) {
+  for (const item of state.currentResults) {
     tbody.appendChild(buildRow(item, terms));
   }
   els.results.appendChild(table);
@@ -244,6 +256,7 @@ function runSearch() {
   }
   state.hasSearched = true;
   setStatus("検索中");
+  setDownloadEnabled(false);
   clearExpandedRows();
   state.worker.postMessage({
     type: "search",
@@ -260,9 +273,70 @@ function loadBody(item) {
   state.worker.postMessage({ type: "body", source: state.source, id: item.id });
 }
 
+function buildExportText(records) {
+  const header = [
+    "建築法規検索 TXT保存",
+    `検索対象: ${state.source === "law" ? "法令" : "告示"}`,
+    `条番号/告示番号: ${els.numberQuery.value || ""}`,
+    `キーワード: ${els.keywordQuery.value || ""}`,
+    `法令名: ${state.source === "law" ? els.lawTitleFilter.options[els.lawTitleFilter.selectedIndex]?.text || "全法令" : ""}`,
+    `件数: ${records.length}`,
+    "",
+  ];
+  const blocks = records.map((record, index) => {
+    if (record.source === "law") {
+      return [
+        `# ${index + 1}`,
+        `法令: ${record.law_title || ""}`,
+        `条: ${record.article_number || ""}`,
+        "本文:",
+        formatBodyText(record.body || record.preview || ""),
+      ].join("\n");
+    }
+    return [
+      `# ${index + 1}`,
+      `告示番号: ${record.document_number_norm || record.document_number || ""}`,
+      `告示名: ${record.notice_name || ""}`,
+      `日付: ${record.document_date || ""}`,
+      `組織: ${record.organization || ""}`,
+      `リンク: ${record.url || ""}`,
+      "本文:",
+      record.body || record.preview || "",
+    ].join("\n");
+  });
+  return `${header.join("\n")}${blocks.join("\n\n---\n\n")}\n`;
+}
+
+function downloadTextFile(text) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const filename = `archi_law_search_${state.source}_${stamp}.txt`;
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function exportTxt() {
+  if (!state.currentResults.length) {
+    return;
+  }
+  setStatus("TXT生成中");
+  setDownloadEnabled(false);
+  state.worker.postMessage({
+    type: "export",
+    source: state.source,
+    ids: state.currentResults.map((record) => record.id),
+  });
+}
+
 function initWorker() {
   try {
-    state.worker = new Worker("search-worker.js?v=3856927");
+    state.worker = new Worker("search-worker.js?v=c2d2096");
   } catch (error) {
     setStatus("Workerを起動できません");
     els.results.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
@@ -289,8 +363,15 @@ function initWorker() {
       renderBody(message.record, message.body || "");
       return;
     }
+    if (message.type === "export") {
+      downloadTextFile(buildExportText(message.records || []));
+      setStatus("TXT保存完了");
+      setDownloadEnabled(state.currentResults.length > 0);
+      return;
+    }
     if (message.type === "error") {
       setStatus("読み込みエラー");
+      setDownloadEnabled(state.currentResults.length > 0);
       els.results.innerHTML = `<div class="empty">${escapeHtml(message.message)}</div>`;
     }
   });
@@ -302,6 +383,9 @@ els.tabs.forEach((tab) => {
   tab.addEventListener("click", () => setSource(tab.dataset.source));
 });
 els.searchButton.addEventListener("click", runSearch);
+if (els.textDownloadButton) {
+  els.textDownloadButton.addEventListener("click", exportTxt);
+}
 els.lawTitleFilter.addEventListener("change", () => {
   if (state.hasSearched) {
     runSearch();
