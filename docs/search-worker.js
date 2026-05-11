@@ -125,6 +125,45 @@ function recordMetaText(record, source) {
   ].join(" ");
 }
 
+function lawTitleOptions() {
+  const counts = new Map();
+  for (const record of indexes.law) {
+    const title = String(record.law_title || "").trim();
+    if (title) {
+      counts.set(title, (counts.get(title) || 0) + 1);
+    }
+  }
+
+  const priority = [
+    "建築基準法",
+    "建築基準法施行令",
+    "消防法",
+    "消防法施行令",
+    "都市計画法",
+    "都市計画法施行令",
+    "建築士法",
+    "建設業法",
+    "宅地造成及び特定盛土等規制法",
+    "高齢者、障害者等の移動等の円滑化の促進に関する法律",
+    "建築物のエネルギー消費性能の向上等に関する法律",
+    "建築物の耐震改修の促進に関する法律",
+    "長期優良住宅の普及の促進に関する法律",
+    "都市再開発法",
+    "土地区画整理法",
+    "景観法",
+    "屋外広告物法",
+  ];
+
+  const titles = Array.from(counts.keys());
+  const prioritySet = new Set(priority);
+  const sorted = [
+    ...priority.filter((title) => counts.has(title)),
+    ...titles.filter((title) => !prioritySet.has(title)).sort((a, b) => a.localeCompare(b, "ja")),
+  ];
+
+  return sorted.map((title) => ({ title, count: counts.get(title) || 0 }));
+}
+
 async function loadIndex(source) {
   const response = await fetch(`data/${source === "law" ? "law" : "kokuji"}_index.json`);
   if (!response.ok) {
@@ -200,6 +239,7 @@ self.addEventListener("message", async (event) => {
       self.postMessage({
         type: "ready",
         counts: { law: indexes.law.length, kokuji: indexes.kokuji.length },
+        lawTitles: lawTitleOptions(),
       });
       return;
     }
