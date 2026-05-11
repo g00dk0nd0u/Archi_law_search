@@ -320,20 +320,20 @@ tbody tr.expanded {
 }
 
 .law {
-  width: 17%;
+  width: 11%;
   color: var(--accent);
   font-weight: 700;
   line-height: 1.58;
 }
 
 .article {
-  width: 11%;
+  width: 10%;
   line-height: 1.5;
   font-variant-numeric: tabular-nums;
 }
 
 .body {
-  width: 72%;
+  width: 79%;
   min-width: 20rem;
   line-height: 1.7;
 }
