@@ -41,6 +41,10 @@ function highlight(value, terms) {
   return html;
 }
 
+function formatBodyText(value) {
+  return String(value || "").replace(/^(（[^）]+）)\s*/, "$1\n");
+}
+
 function setStatus(text) {
   els.status.textContent = text;
 }
@@ -183,10 +187,9 @@ function buildRow(item, terms) {
 }
 
 function lawRowHtml(item, terms) {
-  const article = `${item.article_number}${item.article_title || ""}`;
   return `
     <td class="law">${highlight(item.law_title || "", terms)}</td>
-    <td class="article">${highlight(article, terms)}</td>
+    <td class="article">${highlight(item.article_number || "", terms)}</td>
     <td class="body body-cell">${bodyCellHtml(item, terms, false)}</td>
   `;
 }
@@ -206,7 +209,7 @@ function kokujiRowHtml(item, terms) {
 }
 
 function bodyCellHtml(item, terms, expanded, body = "") {
-  const text = expanded ? body : item.preview || "";
+  const text = formatBodyText(expanded ? body : item.preview || "");
   const className = expanded ? "body-full" : "body-preview";
   return `<div class="body-wrap"><div class="${className}">${highlight(text, terms)}</div></div>`;
 }
