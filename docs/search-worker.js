@@ -168,7 +168,7 @@ function lawTitleOptions() {
   const titles = Array.from(counts.keys());
   const prioritySet = new Set(priority);
   const sorted = [
-    ...priority.filter((title) => counts.has(title)),
+    ...priority,
     ...titles.filter((title) => !prioritySet.has(title)).sort((a, b) => a.localeCompare(b, "ja")),
   ];
 
