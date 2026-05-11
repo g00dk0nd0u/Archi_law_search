@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Archi Law Search</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div>
+      <h1>Archi Law Search</h1>
+      <p>法令DBと告示DBを分けて検索する公開用の静的検索ページです。</p>
+    </div>
+    <div class="status" id="status">読み込み中</div>
+  </header>
+
+  <main class="layout">
+    <section class="search-panel" aria-label="検索条件">
+      <div class="source-tabs" role="tablist" aria-label="検索対象">
+        <button class="source-tab active" type="button" data-source="law">法令</button>
+        <button class="source-tab" type="button" data-source="kokuji">告示</button>
+      </div>
+
+      <label class="field">
+        <span id="number-label">条番号</span>
+        <input id="number-query" type="search" autocomplete="off" placeholder="例: 第五十二条">
+      </label>
+
+      <label class="field">
+        <span>キーワード</span>
+        <input id="keyword-query" type="search" autocomplete="off" placeholder="スペース区切りでAND検索">
+      </label>
+
+      <div class="actions">
+        <button id="search-button" type="button">検索</button>
+        <button id="clear-button" type="button" class="secondary">クリア</button>
+      </div>
+    </section>
+
+    <section class="results-panel" aria-label="検索結果">
+      <div class="results-header">
+        <h2>検索結果</h2>
+        <span id="result-count">0件</span>
+      </div>
+      <div id="results" class="results"></div>
+    </section>
+
+    <section class="body-panel" aria-label="本文">
+      <div class="body-header">
+        <h2>本文</h2>
+        <a id="source-link" href="#" target="_blank" rel="noopener" hidden>原典リンク</a>
+      </div>
+      <div id="body-title" class="body-title">検索結果を選択してください。</div>
+      <pre id="body-text" class="body-text"></pre>
+    </section>
+  </main>
+
+  <script src="app.js" defer></script>
+</body>
+</html>

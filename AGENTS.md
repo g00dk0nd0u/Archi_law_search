@@ -34,4 +34,4 @@
 - ユーザー向けの最終回答の末尾に「必要なら〜」は書きません。
 - 回答前に、DB検索・条文番号・条名・原文・非DB説明の混入有無・`まとめ/根拠条文/原文` の形を確認します。
 - 開発時は既存Webアプリを壊さないことを優先します。
-- 詳細は `docs/CODEX_USAGE.md` / `docs/DEVELOPMENT.md` / `docs/DB_POLICY.md` を参照してください。
+- 詳細は `project_docs/CODEX_USAGE.md` / `project_docs/DEVELOPMENT.md` / `project_docs/DB_POLICY.md` を参照してください。

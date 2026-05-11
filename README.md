@@ -59,7 +59,7 @@ python -m cli.search_laws --query "容積率" --export-txt
 - 共通DB: [data/laws.db](data/laws.db)
 - 告示DB: [data/kokuji_notices.db](data/kokuji_notices.db)
 
-現在の DB 収録範囲や運用上の注意は [docs/DB_POLICY.md](docs/DB_POLICY.md) を参照してください。
+現在の DB 収録範囲や運用上の注意は [project_docs/DB_POLICY.md](project_docs/DB_POLICY.md) を参照してください。
 
 ## Kokuji DB 取込
 
@@ -85,12 +85,26 @@ python3 -m cli.search_kokuji --notice-number "1436号" --limit 10
 検索は LIKE を主とし、DB内に FTS5 テーブルがある場合だけ補助的に使います。`document_number_norm` / `document_number_digits` がある新しい告示DBではそれらを優先し、古いDBでは `document_number` / `notice_name` / `full_text` に自動フォールバックします。
 `kokuji` を検索対象に含めるかは `source_registry` の `is_active` で切り替えます。inactive でも DB ファイルは削除しません。
 
-## docs
+## GitHub Pages 公開版
 
-- [docs/CODEX_USAGE.md](docs/CODEX_USAGE.md)
-- [docs/USER_MANUAL.md](docs/USER_MANUAL.md)
-- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
-- [docs/DB_POLICY.md](docs/DB_POLICY.md)
+GitHub Pages 向けの静的検索アプリは [docs/](docs/) 配下にあります。ローカル版の Python Web アプリ、CLI 検索、SQLite 運用は従来通りです。
+
+公開用データを生成します。
+
+```bash
+python scripts/build_public_site.py
+```
+
+GitHub Pages は `Settings` → `Pages` → `Deploy from branch` → `main` / `docs` に設定します。
+
+## project_docs
+
+資料類は [project_docs/](project_docs/) 配下にあります。
+
+- [project_docs/CODEX_USAGE.md](project_docs/CODEX_USAGE.md)
+- [project_docs/USER_MANUAL.md](project_docs/USER_MANUAL.md)
+- [project_docs/DEVELOPMENT.md](project_docs/DEVELOPMENT.md)
+- [project_docs/DB_POLICY.md](project_docs/DB_POLICY.md)
 
 ## テスト
 
