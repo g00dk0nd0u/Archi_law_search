@@ -242,6 +242,16 @@ async function search(source, numberQuery, keywordQuery, lawTitleFilter, limit) 
   return { results, terms: [...tokenize(numberQuery), ...terms] };
 }
 
+async function exportRecords(source, ids) {
+  const idSet = new Set(ids || []);
+  const records = indexes[source].filter((record) => idSet.has(record.id));
+  const exported = [];
+  for (const record of records) {
+    exported.push({ ...record, source, body: await loadBody(record) });
+  }
+  return exported;
+}
+
 self.addEventListener("message", async (event) => {
   const message = event.data || {};
   try {
@@ -273,6 +283,11 @@ self.addEventListener("message", async (event) => {
       }
       const body = await loadBody(record);
       self.postMessage({ type: "body", record: { ...record, source }, body });
+      return;
+    }
+    if (message.type === "export") {
+      const source = message.source || "law";
+      self.postMessage({ type: "export", records: await exportRecords(source, message.ids || []) });
     }
   } catch (error) {
     self.postMessage({ type: "error", message: error.message || String(error) });
