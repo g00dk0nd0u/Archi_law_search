@@ -336,7 +336,7 @@ function exportTxt() {
 
 function initWorker() {
   try {
-    state.worker = new Worker("search-worker.js?v=c2d2096");
+    state.worker = new Worker("search-worker.js?v=e9d29d0");
   } catch (error) {
     setStatus("Workerを起動できません");
     els.results.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
