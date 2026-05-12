@@ -88,8 +88,24 @@ function articleVariants(value) {
 }
 
 function isSupplementaryRecord(record) {
-  return [record.article_number, record.provision_kind, record.provision_context]
-    .some((value) => String(value || "").includes("附則"));
+  const headingText = [
+    record.article_number,
+    record.article_title,
+    record.provision_kind,
+    record.provision_context,
+  ].join(" ");
+  const previewText = String(record.preview || "").slice(0, 220);
+
+  if (headingText.includes("附則")) {
+    return true;
+  }
+  if (/経過措置|施行期日|罰則に関する経過措置/.test(headingText)) {
+    return true;
+  }
+  if (/附則|経過措置|この法律の施行|この法律\s*\(|施行前|改正法|旧法|新法/.test(previewText)) {
+    return true;
+  }
+  return false;
 }
 
 function numberMatches(record, source, numberQuery) {
