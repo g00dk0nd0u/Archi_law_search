@@ -1,9 +1,15 @@
+const DATA_VERSION = "lawdata-20260512";
+
 const indexes = {
   law: [],
   kokuji: [],
 };
 
 const bodyCache = new Map();
+
+function versionedUrl(path) {
+  return `${path}?v=${encodeURIComponent(DATA_VERSION)}`;
+}
 
 function tokenize(value) {
   return String(value || "")
@@ -176,7 +182,8 @@ function lawTitleOptions() {
 }
 
 async function loadIndex(source) {
-  const response = await fetch(`data/${source === "law" ? "law" : "kokuji"}_index.json`);
+  const path = `data/${source === "law" ? "law" : "kokuji"}_index.json`;
+  const response = await fetch(versionedUrl(path));
   if (!response.ok) {
     throw new Error(`${response.url} を読み込めませんでした`);
   }
@@ -188,7 +195,7 @@ async function loadBodyPath(path) {
   if (bodyCache.has(path)) {
     return bodyCache.get(path);
   }
-  const response = await fetch(path);
+  const response = await fetch(versionedUrl(path));
   if (!response.ok) {
     throw new Error(`${path} を読み込めませんでした`);
   }
