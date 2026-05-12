@@ -87,6 +87,11 @@ function articleVariants(value) {
   return Array.from(variants);
 }
 
+function isSupplementaryRecord(record) {
+  return [record.article_number, record.provision_kind, record.provision_context]
+    .some((value) => String(value || "").includes("附則"));
+}
+
 function numberMatches(record, source, numberQuery) {
   const raw = String(numberQuery || "").trim();
   if (!raw) {
@@ -94,6 +99,9 @@ function numberMatches(record, source, numberQuery) {
   }
   const normalized = normalizeSearchText(raw);
   if (source === "law") {
+    if (!raw.includes("附則") && isSupplementaryRecord(record)) {
+      return false;
+    }
     const target = normalizeSearchText(record.article_number);
     return articleVariants(raw).some((variant) => target.startsWith(normalizeSearchText(variant)));
   }
