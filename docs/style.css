@@ -319,23 +319,46 @@ tbody tr.expanded {
   cursor: pointer;
 }
 
-.law {
+.law-table .law {
   width: 11%;
   color: var(--accent);
   font-weight: 700;
   line-height: 1.58;
 }
 
-.article {
+.law-table .article {
   width: 10%;
   line-height: 1.5;
   font-variant-numeric: tabular-nums;
 }
 
-.body {
-  width: 79%;
+.law-table .body {
+  width: 71%;
   min-width: 20rem;
   line-height: 1.7;
+}
+
+.law-table .copy-cell {
+  width: 8%;
+  min-width: 6.5rem;
+  text-align: center;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.copy-button {
+  padding: 0.28rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.copy-button:hover:not(:disabled) {
+  background: var(--surface-muted);
 }
 
 .body-preview,
@@ -354,6 +377,8 @@ tbody tr.expanded {
 
 .kokuji-table .article {
   width: 14%;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
 }
 
 .kokuji-name {

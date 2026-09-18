@@ -7,6 +7,8 @@ const state = {
   lastTerms: [],
   recordsById: new Map(),
   currentResults: [],
+  nextBodyRequestId: 1,
+  copyRequests: new Map(),
 };
 
 const els = {
@@ -148,7 +150,7 @@ function clearExpandedRows() {
 
 function tableHeadHtml(source) {
   if (source === "law") {
-    return "<thead><tr><th>法令</th><th>条</th><th>本文</th></tr></thead>";
+    return "<thead><tr><th>法令</th><th>条</th><th>本文</th><th class=\"copy-cell\">コピー</th></tr></thead>";
   }
   return "<thead><tr><th>告示番号</th><th>告示名</th><th>本文</th><th>リンク</th></tr></thead>";
 }
@@ -180,8 +182,15 @@ function buildRow(item, terms) {
   row.className = "result-row";
   row.dataset.id = item.id;
   row.innerHTML = item.source === "law" ? lawRowHtml(item, terms) : kokujiRowHtml(item, terms);
+  const copyButton = row.querySelector(".copy-button");
+  if (copyButton) {
+    copyButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      copyLawBody(item, copyButton);
+    });
+  }
   row.addEventListener("click", (event) => {
-    if (event.target.closest("a")) {
+    if (event.target.closest("a, button")) {
       return;
     }
     if (row.classList.contains("expanded")) {
@@ -199,10 +208,12 @@ function buildRow(item, terms) {
 }
 
 function lawRowHtml(item, terms) {
+  const copyLabel = `${item.law_title || "法令"} ${item.article_number || ""}をコピー`;
   return `
     <td class="law">${highlight(item.law_title || "", terms)}</td>
     <td class="article">${highlight(item.article_number || "", terms)}</td>
     <td class="body body-cell">${bodyCellHtml(item, terms, false)}</td>
+    <td class="copy-cell"><button type="button" class="copy-button" aria-label="${escapeHtml(copyLabel)}">コピー</button></td>
   `;
 }
 
@@ -270,7 +281,66 @@ function runSearch() {
 
 function loadBody(item) {
   setStatus("本文読み込み中");
-  state.worker.postMessage({ type: "body", source: state.source, id: item.id });
+  const requestId = state.nextBodyRequestId++;
+  state.worker.postMessage({ type: "body", purpose: "expand", requestId, source: item.source, id: item.id });
+}
+
+function copyLawBody(item, button) {
+  const requestId = state.nextBodyRequestId++;
+  state.copyRequests.set(requestId, { item, button });
+  button.disabled = true;
+  button.textContent = "コピー中…";
+  state.worker.postMessage({ type: "body", purpose: "copy", requestId, source: "law", id: item.id });
+}
+
+async function writeClipboardText(text) {
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch (error) {
+      // Clipboard API が拒否された場合は、ローカル環境向けの方法を試す。
+    }
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  let copied = false;
+  try {
+    copied = document.execCommand("copy");
+  } finally {
+    textarea.remove();
+  }
+  if (!copied) {
+    throw new Error("クリップボードへコピーできませんでした");
+  }
+}
+
+async function finishCopyRequest(message) {
+  const request = state.copyRequests.get(message.requestId);
+  if (!request) {
+    return;
+  }
+  state.copyRequests.delete(message.requestId);
+  const { item, button } = request;
+  const text = `${item.law_title || ""} ${item.article_number || ""}\n${message.body || ""}`;
+  try {
+    await writeClipboardText(text);
+    button.textContent = "コピー済";
+    setStatus("コピー完了");
+    window.setTimeout(() => {
+      button.textContent = "コピー";
+      button.disabled = false;
+    }, 1500);
+  } catch (error) {
+    button.textContent = "コピー失敗";
+    button.disabled = false;
+    setStatus(error.message || "コピーに失敗しました");
+  }
 }
 
 function buildExportText(records) {
@@ -336,7 +406,7 @@ function exportTxt() {
 
 function initWorker() {
   try {
-    state.worker = new Worker("search-worker.js?v=5fc1299");
+    state.worker = new Worker("search-worker.js?v=law-copy-1");
   } catch (error) {
     setStatus("Workerを起動できません");
     els.results.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
@@ -359,6 +429,10 @@ function initWorker() {
       return;
     }
     if (message.type === "body") {
+      if (message.purpose === "copy") {
+        finishCopyRequest(message);
+        return;
+      }
       setStatus("本文表示中");
       renderBody(message.record, message.body || "");
       return;
@@ -370,6 +444,16 @@ function initWorker() {
       return;
     }
     if (message.type === "error") {
+      if (message.purpose === "copy") {
+        const request = state.copyRequests.get(message.requestId);
+        state.copyRequests.delete(message.requestId);
+        if (request) {
+          request.button.textContent = "コピー失敗";
+          request.button.disabled = false;
+        }
+        setStatus(message.message || "コピーに失敗しました");
+        return;
+      }
       setStatus("読み込みエラー");
       setDownloadEnabled(state.currentResults.length > 0);
       els.results.innerHTML = `<div class="empty">${escapeHtml(message.message)}</div>`;
