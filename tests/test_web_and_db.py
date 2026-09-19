@@ -881,6 +881,37 @@ class DatabaseAndWebTests(unittest.TestCase):
         self.assertLess(html_doc.index('name="q"'), html_doc.index('name="source" value="law"'))
         self.assertLess(html_doc.index('name="source" value="law"'), html_doc.index('class="search-submit"'))
 
+    def test_github_pages_normalizes_law_article_heading_line_breaks(self):
+        app_js = (ROOT / "docs" / "app.js").read_text(encoding="utf-8")
+        function_start = app_js.index("function normalizeLawArticleHeading")
+        function_end = app_js.index("\n}\n", function_start) + 3
+        normalizer = app_js[function_start:function_end]
+        cases = {
+            "第一条 本文": "第一条\n本文",
+            "第三十五条の三　本文": "第三十五条の三\n本文",
+            "第百十二条 本文": "第百十二条\n本文",
+            "第百十二条の二\n本文": "第百十二条の二\n本文",
+            "第百十二条の二の二  \n  本文": "第百十二条の二の二\n本文",
+            "第35条の3\t本文": "第35条の3\n本文",
+            "第３５条の３ 本文": "第３５条の３\n本文",
+            "第三十五条の規定により適用する。": "第三十五条の規定により適用する。",
+            "本文から始まる。": "本文から始まる。",
+        }
+        script = (
+            normalizer
+            + "\nconst cases = "
+            + json.dumps(cases, ensure_ascii=False)
+            + "; process.stdout.write(JSON.stringify(Object.fromEntries("
+            + "Object.keys(cases).map((value) => [value, normalizeLawArticleHeading(value)]))));"
+        )
+        result = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+        self.assertEqual(json.loads(result.stdout), cases)
+
+        body_cell_start = app_js.index("function bodyCellHtml")
+        body_cell_end = app_js.index("\n}\n", body_cell_start)
+        body_cell = app_js[body_cell_start:body_cell_end]
+        self.assertIn('state.source === "law" ? normalizeLawArticleHeading(rawText) : rawText', body_cell)
+
     def test_render_kokuji_table_uses_notice_number_first_and_link_labels(self):
         handler = object.__new__(LawSearchHandler)
         table_html = LawSearchHandler.render_kokuji_table(
