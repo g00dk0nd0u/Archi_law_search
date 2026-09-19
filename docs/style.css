@@ -624,6 +624,7 @@ mark {
     min-width: 0;
     padding-top: 0;
     text-align: right;
+    white-space: normal;
   }
 
   .kokuji-table .result-row {
@@ -657,6 +658,13 @@ mark {
     padding-top: 0;
     text-align: right;
     white-space: normal;
+  }
+
+  .kokuji-link-cell .kokuji-link-button,
+  .kokuji-link-cell .copy-button {
+    max-width: 100%;
+    align-items: center;
+    overflow-wrap: anywhere;
   }
 
   .body-full {
