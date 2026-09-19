@@ -326,16 +326,22 @@ tbody tr.expanded {
   line-height: 1.58;
 }
 
-.law-table .article {
-  width: 10%;
+.article {
   line-height: 1.5;
   font-variant-numeric: tabular-nums;
 }
 
-.law-table .body {
-  width: 71%;
+.law-table .article {
+  width: 10%;
+}
+
+.body {
   min-width: 20rem;
   line-height: 1.7;
+}
+
+.law-table .body {
+  width: 71%;
 }
 
 .law-table .copy-cell {
@@ -377,8 +383,6 @@ tbody tr.expanded {
 
 .kokuji-table .article {
   width: 14%;
-  line-height: 1.5;
-  font-variant-numeric: tabular-nums;
 }
 
 .kokuji-name {
