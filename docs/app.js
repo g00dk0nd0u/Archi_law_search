@@ -53,8 +53,8 @@ function formatBodyText(value) {
 
 function normalizeLawArticleHeading(value) {
   return String(value || "").replace(
-    /^(第[一二三四五六七八九十百千万〇零0-9０-９]+条(?:の[一二三四五六七八九十百千万〇零0-9０-９]+)*)(?:[ \t\u3000\r\n]+|$)/,
-    "$1\n",
+    /^((?:（[^）]+）\n)?)(第[一二三四五六七八九十百千万〇零0-9０-９]+条(?:の[一二三四五六七八九十百千万〇零0-9０-９]+)*)(?:[ \t\u3000\r\n]+|$)/,
+    "$1$2\n",
   );
 }
 
@@ -246,7 +246,8 @@ function kokujiRowHtml(item, terms) {
 
 function bodyCellHtml(item, terms, expanded, body = "") {
   const rawText = expanded ? body : item.preview || "";
-  const text = formatBodyText(item.source === "law" ? normalizeLawArticleHeading(rawText) : rawText);
+  const formattedText = formatBodyText(rawText);
+  const text = item.source === "law" ? normalizeLawArticleHeading(formattedText) : formattedText;
   const className = expanded ? "body-full" : "body-preview";
   return `<div class="body-wrap"><div class="${className}">${highlight(text, terms)}</div></div>`;
 }

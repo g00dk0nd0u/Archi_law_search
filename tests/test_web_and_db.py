@@ -894,6 +894,9 @@ class DatabaseAndWebTests(unittest.TestCase):
             "第百十二条の二の二  \n  本文": "第百十二条の二の二\n本文",
             "第35条の3\t本文": "第35条の3\n本文",
             "第３５条の３ 本文": "第３５条の３\n本文",
+            "（目的）\n第一条 本文": "（目的）\n第一条\n本文",
+            "（目的）\n第一条\n本文": "（目的）\n第一条\n本文",
+            "（定義）\n第三十五条の三 本文": "（定義）\n第三十五条の三\n本文",
             "第三十五条の規定により適用する。": "第三十五条の規定により適用する。",
             "本文から始まる。": "本文から始まる。",
         }
@@ -910,7 +913,8 @@ class DatabaseAndWebTests(unittest.TestCase):
         body_cell_start = app_js.index("function bodyCellHtml")
         body_cell_end = app_js.index("\n}\n", body_cell_start)
         body_cell = app_js[body_cell_start:body_cell_end]
-        self.assertIn('item.source === "law" ? normalizeLawArticleHeading(rawText) : rawText', body_cell)
+        self.assertIn("const formattedText = formatBodyText(rawText);", body_cell)
+        self.assertIn('item.source === "law" ? normalizeLawArticleHeading(formattedText) : formattedText', body_cell)
         self.assertNotIn('state.source === "law"', body_cell)
 
         function_names = ("escapeHtml", "highlight", "formatBodyText", "normalizeLawArticleHeading", "bodyCellHtml")
@@ -921,22 +925,22 @@ class DatabaseAndWebTests(unittest.TestCase):
             functions.append(app_js[start:end])
         render_script = "\n".join(functions) + """
 const terms = [];
-const law = {source: "law", preview: "第三十五条の三 preview"};
-const notice = {source: "kokuji", preview: "第三十五条の三 preview"};
+const law = {source: "law", preview: "（目的） 第一条 preview"};
+const notice = {source: "kokuji", preview: "（目的） 第一条 preview"};
 process.stdout.write(JSON.stringify({
   lawPreview: bodyCellHtml(law, terms, false),
-  lawFull: bodyCellHtml(law, terms, true, "第三十五条の三 full body"),
+  lawFull: bodyCellHtml(law, terms, true, "（定義） 第三十五条の三 full body"),
   noticePreview: bodyCellHtml(notice, terms, false),
-  noticeFull: bodyCellHtml(notice, terms, true, "第三十五条の三 full body"),
+  noticeFull: bodyCellHtml(notice, terms, true, "（定義） 第三十五条の三 full body"),
 }));
 """
         rendered = json.loads(
             subprocess.run(["node", "-e", render_script], check=True, capture_output=True, text=True).stdout
         )
-        self.assertIn("第三十五条の三\npreview", rendered["lawPreview"])
-        self.assertIn("第三十五条の三\nfull body", rendered["lawFull"])
-        self.assertIn("第三十五条の三 preview", rendered["noticePreview"])
-        self.assertIn("第三十五条の三 full body", rendered["noticeFull"])
+        self.assertIn("（目的）\n第一条\npreview", rendered["lawPreview"])
+        self.assertIn("（定義）\n第三十五条の三\nfull body", rendered["lawFull"])
+        self.assertIn("（目的）\n第一条 preview", rendered["noticePreview"])
+        self.assertIn("（定義）\n第三十五条の三 full body", rendered["noticeFull"])
 
     def test_render_kokuji_table_uses_notice_number_first_and_link_labels(self):
         handler = object.__new__(LawSearchHandler)
