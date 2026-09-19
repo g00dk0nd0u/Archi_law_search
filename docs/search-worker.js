@@ -313,7 +313,13 @@ self.addEventListener("message", async (event) => {
         throw new Error("本文レコードが見つかりません");
       }
       const body = await loadBody(record);
-      self.postMessage({ type: "body", record: { ...record, source }, body });
+      self.postMessage({
+        type: "body",
+        purpose: message.purpose || "expand",
+        requestId: message.requestId,
+        record: { ...record, source },
+        body,
+      });
       return;
     }
     if (message.type === "export") {
@@ -321,6 +327,11 @@ self.addEventListener("message", async (event) => {
       self.postMessage({ type: "export", records: await exportRecords(source, message.ids || []) });
     }
   } catch (error) {
-    self.postMessage({ type: "error", message: error.message || String(error) });
+    self.postMessage({
+      type: "error",
+      purpose: message.purpose,
+      requestId: message.requestId,
+      message: error.message || String(error),
+    });
   }
 });
