@@ -246,7 +246,7 @@ function kokujiRowHtml(item, terms) {
 
 function bodyCellHtml(item, terms, expanded, body = "") {
   const rawText = expanded ? body : item.preview || "";
-  const text = formatBodyText(state.source === "law" ? normalizeLawArticleHeading(rawText) : rawText);
+  const text = formatBodyText(item.source === "law" ? normalizeLawArticleHeading(rawText) : rawText);
   const className = expanded ? "body-full" : "body-preview";
   return `<div class="body-wrap"><div class="${className}">${highlight(text, terms)}</div></div>`;
 }
