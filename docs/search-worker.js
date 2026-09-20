@@ -270,6 +270,14 @@ async function search(source, numberQuery, keywordQuery, lawTitleFilter, limit) 
       break;
     }
   }
+
+  if (source === "law") {
+    const paths = Array.from(new Set(results.map((record) => record.body_path).filter(Boolean)));
+    await Promise.all(paths.map(loadBodyPath));
+    for (const record of results) {
+      record.preview = cachedBody(record).replace(/\r\n?/g, "\n");
+    }
+  }
   return { results, terms: [...tokenize(numberQuery), ...terms] };
 }
 
