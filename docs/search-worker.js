@@ -273,9 +273,16 @@ async function search(source, numberQuery, keywordQuery, lawTitleFilter, limit) 
 
   if (source === "law") {
     const paths = Array.from(new Set(results.map((record) => record.body_path).filter(Boolean)));
-    await Promise.all(paths.map(loadBodyPath));
+    await Promise.all(paths.map(async (path) => {
+      try {
+        await loadBodyPath(path);
+      } catch (_error) {
+        // Keep the index preview when its body shard cannot be loaded.
+      }
+    }));
     for (const record of results) {
-      record.preview = cachedBody(record).replace(/\r\n?/g, "\n");
+      const body = cachedBody(record);
+      record.mobile_preview = String(body || record.preview || "").replace(/\r\n?/g, "\n").slice(0, 400);
     }
   }
   return { results, terms: [...tokenize(numberQuery), ...terms] };

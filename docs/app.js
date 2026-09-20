@@ -245,7 +245,9 @@ function kokujiRowHtml(item, terms) {
 }
 
 function bodyCellHtml(item, terms, expanded, body = "") {
-  const rawText = expanded ? body : item.preview || "";
+  const isMobile = typeof window !== "undefined" && window.matchMedia("(max-width: 600px)").matches;
+  const preview = isMobile ? item.mobile_preview || item.preview : item.preview;
+  const rawText = expanded ? body : preview || "";
   const formattedText = formatBodyText(rawText);
   const text = item.source === "law" ? normalizeLawArticleHeading(formattedText) : formattedText;
   const className = expanded ? "body-full" : "body-preview";
@@ -446,7 +448,7 @@ function exportTxt() {
 
 function initWorker() {
   try {
-    state.worker = new Worker("search-worker.js?v=law-body-preview-1");
+    state.worker = new Worker("search-worker.js?v=law-mobile-preview-2");
   } catch (error) {
     setStatus("Workerを起動できません");
     els.results.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
