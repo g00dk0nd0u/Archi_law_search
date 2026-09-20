@@ -7,6 +7,7 @@ const state = {
   lastTerms: [],
   recordsById: new Map(),
   currentResults: [],
+  searchGeneration: 0,
   nextBodyRequestId: 1,
   copyGeneration: 0,
   copyBodies: new Map(),
@@ -245,7 +246,9 @@ function kokujiRowHtml(item, terms) {
 }
 
 function bodyCellHtml(item, terms, expanded, body = "") {
-  const rawText = expanded ? body : item.preview || "";
+  const isMobile = typeof window !== "undefined" && window.matchMedia("(max-width: 600px)").matches;
+  const preview = isMobile ? item.mobile_preview || item.preview : item.preview;
+  const rawText = expanded ? body : preview || "";
   const formattedText = formatBodyText(rawText);
   const text = item.source === "law" ? normalizeLawArticleHeading(formattedText) : formattedText;
   const className = expanded ? "body-full" : "body-preview";
@@ -280,6 +283,7 @@ function runSearch() {
   if (!state.ready) {
     return;
   }
+  state.searchGeneration += 1;
   state.hasSearched = true;
   setStatus("検索中");
   setDownloadEnabled(false);
@@ -287,6 +291,7 @@ function runSearch() {
   clearExpandedRows();
   state.worker.postMessage({
     type: "search",
+    searchGeneration: state.searchGeneration,
     source: state.source,
     numberQuery: els.numberQuery.value,
     keywordQuery: els.keywordQuery.value,
@@ -446,7 +451,7 @@ function exportTxt() {
 
 function initWorker() {
   try {
-    state.worker = new Worker("search-worker.js?v=law-copy-1");
+    state.worker = new Worker("search-worker.js?v=law-search-generation-1");
   } catch (error) {
     setStatus("Workerを起動できません");
     els.results.innerHTML = `<div class="empty">${escapeHtml(error.message)}</div>`;
@@ -463,6 +468,9 @@ function initWorker() {
       return;
     }
     if (message.type === "results") {
+      if (message.searchGeneration !== state.searchGeneration) {
+        return;
+      }
       state.lastTerms = message.terms || [];
       setStatus("検索完了");
       renderResults(message.results || [], state.lastTerms);
@@ -484,6 +492,9 @@ function initWorker() {
       return;
     }
     if (message.type === "error") {
+      if (message.searchGeneration !== undefined && message.searchGeneration !== state.searchGeneration) {
+        return;
+      }
       if (message.purpose === "copy-prefetch") {
         const request = state.copyPrefetchRequests.get(message.requestId);
         state.copyPrefetchRequests.delete(message.requestId);

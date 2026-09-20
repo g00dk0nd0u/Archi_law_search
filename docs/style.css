@@ -541,11 +541,16 @@ mark {
   }
 
   .text-download-button,
-  .copy-button,
   .kokuji-link-button {
     min-height: 2.75rem;
     padding: 0.55rem 0.8rem;
     font-size: 16px;
+  }
+
+  .copy-button {
+    min-height: 2.1rem;
+    padding: 0.3rem 0.6rem;
+    font-size: 14px;
   }
 
   .result-table,
@@ -671,5 +676,10 @@ mark {
 
   .body-full {
     max-height: none;
+  }
+
+  .law-table .body-preview {
+    max-height: 8.5em;
+    overflow: hidden;
   }
 }
