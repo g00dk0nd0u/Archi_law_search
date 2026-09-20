@@ -318,7 +318,7 @@ self.addEventListener("message", async (event) => {
         message.lawTitleFilter || "",
         Number(message.limit || 100)
       );
-      self.postMessage({ type: "results", ...payload });
+      self.postMessage({ type: "results", searchGeneration: message.searchGeneration, ...payload });
       return;
     }
     if (message.type === "body") {
@@ -342,11 +342,15 @@ self.addEventListener("message", async (event) => {
       self.postMessage({ type: "export", records: await exportRecords(source, message.ids || []) });
     }
   } catch (error) {
-    self.postMessage({
+    const errorMessage = {
       type: "error",
       purpose: message.purpose,
       requestId: message.requestId,
       message: error.message || String(error),
-    });
+    };
+    if (message.type === "search") {
+      errorMessage.searchGeneration = message.searchGeneration;
+    }
+    self.postMessage(errorMessage);
   }
 });
